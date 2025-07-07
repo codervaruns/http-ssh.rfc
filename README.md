@@ -2,7 +2,7 @@
 Submissions repository for `ASOC17` - HTTP-SSH App
 
 > [!NOTE]
-All discussions regarding `ASOC17: HTTP-SSH App` shall take place in https://github.com/orgs/acm-avv/discussions/3.
+All discussions regarding `ASOC17: HTTP-SSH App` shall take place in [https://github.com/orgs/acm-avv/discussions/17](https://github.com/orgs/acm-avv/discussions/17).
 
 ## Overview
 In-order to be eligible to work on this project as **Request for Code** under the banner of **Amrita Summer of Code, 2025**, you are required to form a team of size 1-4 and have all the members register at [amsoc.vercel.app](https://amsoc.vercel.app)
@@ -17,7 +17,7 @@ In-order to be eligible to work on this project as **Request for Code** under th
 ```
 
 ## How to Apply
-Type out a message in https://github.com/orgs/acm-avv/discussions/3 with the following details:
+Type out a message in [https://github.com/orgs/acm-avv/discussions/17](https://github.com/orgs/acm-avv/discussions/17) with the following details:
 1. Team Name
 2. Team Members' Names, Roll-Numbers and respective GitHub usernames
 3. Tag the project manager as **@username**
