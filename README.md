@@ -38,7 +38,7 @@ This project aims to develop a remote shell system that allows users to execute 
 - Mimics SSH: Provide a similar user experience to SSH for remote command execution, but built entirely with web standards.
 
 ### Key Components:
-- Server Application (C++):
+- Server Application (Go or Python or any language):
     - Runs on the target remote machine.
     - Listens for incoming HTTP requests containing commands.
     - Executes received commands using the operating system's shell.
@@ -51,7 +51,7 @@ This project aims to develop a remote shell system that allows users to execute 
     - Receives and displays the command output (stdout, stderr, return code) from the server.
 - Technological Approach:
     - Protocol: HTTP for all client-server communication.
-    - Server-Side: Implemented in C++ for efficient command execution and HTTP handling.
+    - Server-Side: Command execution and HTTP handling.
     - Client-Side: Standard web technologies (HTML, CSS, JavaScript) for the user interface.
 
 This system provides a flexible and web-friendly alternative for remote command execution, leveraging the widespread accessibility and capabilities of HTTP.
