@@ -2,6 +2,7 @@ use std::process::Command;
 use std::io::{self, Write};
 
 fn main(){
+	let mut curr_dir = std::env::current_dir().unwrap();
 	loop {
 		print!("Enter a sentence: ");
 			
@@ -15,7 +16,14 @@ fn main(){
 
 		let sentence = input.trim();
 
-		let output = Command::new("bash").arg("-c").arg(sentence).output().expect("Failed");
+		if sentence.starts_with("cd "){
+			curr_dir = curr_dir.join(sentence[3..].trim());
+			curr_dir = curr_dir.canonicalize().unwrap();
+		}
+
+		let output = Command::new("bash").current_dir(curr_dir.clone()).arg("-c").arg(sentence).output().expect("Failed");
+
+
 
 		let stdout = String::from_utf8_lossy(&output.stdout);
 		
