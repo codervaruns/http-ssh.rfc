@@ -9,7 +9,7 @@ class WebSocketService {
     this.maxReconnectAttempts = 5;
     this.reconnectInterval = 1000;
     this.shouldReconnect = true;
-    this.connectionUrl = 'ws://localhost:3000/ws';
+    this.connectionUrl = 'ws://localhost:8080/ws/test-room'; // Added room ID to match backend route
     this.connectionTimeout = 10000;
     this.connectionTimeoutId = null;
     this.connectTime = null;

@@ -1,9 +1,11 @@
 use actix::prelude::{Message, Recipient};
-use uuid::Uuid as Vvid; // Assuming Vvid is just Uuid, change if you have your own type
+use vvid::Vvid; // Changed from uuid::Uuid
 
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct WsMessage(pub String);
+pub struct WsMessage {
+    pub message: String, // Changed from tuple struct to named field
+}
 
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -16,8 +18,8 @@ pub struct Connect {
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Disconnect {
-    pub lobby_id: Vvid,
-    pub self_id: Vvid,
+    pub lobby_id: Vvid, // Keep consistent naming
+    pub self_id: Vvid,  // Keep consistent naming
 }
 
 #[derive(Message)]
@@ -25,5 +27,14 @@ pub struct Disconnect {
 pub struct ClientActorMessage {
     pub id: Vvid,
     pub msg: String,
+    pub room_id: Vvid,
+}
+
+// Add command message type
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct CommandMessage {
+    pub id: Vvid,
+    pub command: String,
     pub room_id: Vvid,
 }

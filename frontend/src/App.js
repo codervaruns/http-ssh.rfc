@@ -7,7 +7,7 @@ function App() {
   const [output, setOutput] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [connectionUrl, setConnectionUrl] = useState('ws://localhost:3000/ws'); // Updated to point to backend server
+  const [connectionUrl, setConnectionUrl] = useState('ws://localhost:8080/ws/test-room'); // Added room ID
   const [commandHistory, setCommandHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const inputRef = useRef(null);

@@ -4,6 +4,9 @@ use actix_web_actors::ws::Message::Text;
 use std::time::{Duration, Instant};
 use vvid::Vvid;
 
+use crate::lobby::Lobby;
+use crate::message::{Connect, Disconnect, ClientActorMessage, WsMessage}; // Changed from 'messages' to 'message'
+
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -51,8 +54,8 @@ impl Actor for WsConn {
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
         self.lobby_addr.do_send(Disconnect {
-            id: self.id,
-            room_id: self.room,
+            self_id: self.id,   // Changed from 'id' to 'self_id'
+            lobby_id: self.room, // Changed from 'room_id' to 'lobby_id'
         });
         Running::Stop
     }
@@ -64,8 +67,8 @@ impl WsConn {
             if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
                 println!("disconnecting due to heartbeat");
                 act.lobby_addr.do_send(Disconnect {
-                    id: act.id,
-                    room_id: act.room,
+                    self_id: act.id,    // Changed from 'id' to 'self_id'
+                    lobby_id: act.room, // Changed from 'room_id' to 'lobby_id'
                 });
                 ctx.stop();
                 return;
@@ -112,6 +115,6 @@ impl Handler<WsMessage> for WsConn {
     type Result = ();
 
     fn handle(&mut self, msg: WsMessage, ctx: &mut Self::Context) {
-        ctx.text(msg.0);
+        ctx.text(msg.message); // Changed from msg.0 to msg.message
     }
 }
