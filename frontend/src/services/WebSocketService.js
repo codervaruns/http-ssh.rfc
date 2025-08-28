@@ -103,6 +103,18 @@ class WebSocketService {
             return;
           }
           
+          // Handle system messages
+          if (message.type === 'system_message') {
+            console.log('System message:', message.payload.message);
+            this.notifyMessageHandlers({
+              type: 'stdout',
+              data: `[SYSTEM] ${message.payload.message}`,
+              timestamp: Date.now(),
+              isSystem: true
+            });
+            return;
+          }
+          
           // Log all message types for debugging
           console.log('Message type:', message.type);
           if (message.type === 'stdout' || message.type === 'stderr') {

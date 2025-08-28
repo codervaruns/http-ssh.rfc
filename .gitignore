@@ -1,10 +1,24 @@
-# Dependencies
-node_modules/
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Node.js / React
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
 
 # Logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+*.log
+logs/
 
 # Runtime data
 pids
@@ -14,15 +28,25 @@ pids
 
 # Coverage directory used by tools like istanbul
 coverage/
+*.lcov
 
 # nyc test coverage
 .nyc_output
 
 # Dependency directories
-jspm_packages/
+node_modules/
 
 # Optional npm cache directory
 .npm
+
+# Optional eslint cache
+.eslintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
 
 # Optional REPL history
 .node_repl_history
@@ -35,12 +59,38 @@ jspm_packages/
 
 # dotenv environment variables file
 .env
+.env.test
+.env.production
 
-# IDE files
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# Next.js build output
+.next
+
+# Nuxt.js build / generate output
+.nuxt
+dist
+
+# Gatsby files
+.cache/
+public
+
+# Storybook build outputs
+.out
+.storybook-out
+
+# Temporary folders
+tmp/
+temp/
+
+# IDE and Editor files
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
 # OS generated files
 .DS_Store
@@ -50,3 +100,28 @@ jspm_packages/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Configuration files with sensitive data
+config.toml
+secrets.toml
+.secrets
+
+# Test output
+test-results/
+coverage/
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib

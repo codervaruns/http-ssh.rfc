@@ -3,11 +3,20 @@ import WebSocketService from './services/WebSocketService';
 import './App.css';
 
 function App() {
+  // Generate a valid UUID for the room
+  const generateUUID = () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  };
+
   const [command, setCommand] = useState('');
   const [output, setOutput] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [connectionUrl, setConnectionUrl] = useState('ws://localhost:8080/ws/test-room'); // Added room ID
+  const [connectionUrl, setConnectionUrl] = useState(`ws://localhost:8080/ws/${generateUUID()}`); // Added room ID
   const [commandHistory, setCommandHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const inputRef = useRef(null);

@@ -1,26 +1,26 @@
-use actix::{fut, Actor, ActorContext, ActorFutureExt, Addr, Running, StreamHandler, Handler};
+use actix::{fut, Actor, ActorContext, ActorFutureExt, Addr, Running, StreamHandler, Handler, AsyncContext, WrapFuture, ContextFutureSpawner};
 use actix_web_actors::ws;
 use actix_web_actors::ws::Message::Text;
 use std::time::{Duration, Instant};
-use vvid::Vvid;
+use uuid::Uuid;
 
 use crate::lobby::Lobby;
-use crate::message::{Connect, Disconnect, ClientActorMessage, WsMessage}; // Changed from 'messages' to 'message'
+use crate::message::{Connect, Disconnect, ClientActorMessage, WsMessage};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct WsConn {
-    room: Vvid,
+    room: Uuid,
     lobby_addr: Addr<Lobby>,
     hb: Instant,
-    id: Vvid,
+    id: Uuid,
 }
 
 impl WsConn {
-    pub fn new(room: Vvid, lobby: Addr<Lobby>) -> WsConn {
+    pub fn new(room: Uuid, lobby: Addr<Lobby>) -> WsConn {
         WsConn {
-            id: Vvid::new_vd(),
+            id: Uuid::new_v4(),
             room,
             hb: Instant::now(),
             lobby_addr: lobby,
@@ -54,8 +54,8 @@ impl Actor for WsConn {
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
         self.lobby_addr.do_send(Disconnect {
-            self_id: self.id,   // Changed from 'id' to 'self_id'
-            lobby_id: self.room, // Changed from 'room_id' to 'lobby_id'
+            self_id: self.id,
+            lobby_id: self.room,
         });
         Running::Stop
     }
@@ -67,8 +67,8 @@ impl WsConn {
             if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
                 println!("disconnecting due to heartbeat");
                 act.lobby_addr.do_send(Disconnect {
-                    self_id: act.id,    // Changed from 'id' to 'self_id'
-                    lobby_id: act.room, // Changed from 'room_id' to 'lobby_id'
+                    self_id: act.id,
+                    lobby_id: act.room,
                 });
                 ctx.stop();
                 return;
@@ -103,7 +103,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsConn {
             Ok(ws::Message::Nop) => {}
             Ok(Text(s)) => self.lobby_addr.do_send(ClientActorMessage {
                 id: self.id,
-                msg: s,
+                msg: s.to_string(),
                 room_id: self.room,
             }),
             Err(e) => panic!("{:?}", e),
@@ -115,6 +115,6 @@ impl Handler<WsMessage> for WsConn {
     type Result = ();
 
     fn handle(&mut self, msg: WsMessage, ctx: &mut Self::Context) {
-        ctx.text(msg.message); // Changed from msg.0 to msg.message
+        ctx.text(msg.message);
     }
 }

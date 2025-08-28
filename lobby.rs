@@ -1,15 +1,15 @@
-use crate::message::{ClientActorMessage, Connect, Disconnect, WsMessage, CommandMessage}; // Changed from 'messages' to 'message'
+use crate::message::{ClientActorMessage, Connect, Disconnect, WsMessage};
 use actix::prelude::{Actor, Context, Handler, Recipient};
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
-use vvid::Vvid;
+use uuid::Uuid;
 use serde_json;
 
 type Socket = Recipient<WsMessage>;
 
 pub struct Lobby {
-    sessions: HashMap<Vvid, Socket>,
-    rooms: HashMap<Vvid, HashSet<Vvid>>,
+    sessions: HashMap<Uuid, Socket>,
+    rooms: HashMap<Uuid, HashSet<Uuid>>,
 }
 
 impl Default for Lobby {
@@ -22,7 +22,7 @@ impl Default for Lobby {
 }
 
 impl Lobby {
-    fn send_message(&self, message: &str, id_to: &Vvid) {
+    fn send_message(&self, message: &str, id_to: &Uuid) {
         if let Some(socket_recipient) = self.sessions.get(id_to) {
             let _ = socket_recipient.do_send(WsMessage {
                 message: message.to_owned(),
@@ -33,11 +33,18 @@ impl Lobby {
     }
 
     // Add command execution function
-    fn execute_command(&self, command: &str, id_to: &Vvid) {
-        let output = Command::new("bash")
-            .arg("-c")
-            .arg(command)
-            .output();
+    fn execute_command(&self, command: &str, id_to: &Uuid) {
+        // Use cmd on Windows, bash on Unix-like systems
+        let output = if cfg!(target_os = "windows") {
+            Command::new("cmd")
+                .args(["/C", command])
+                .output()
+        } else {
+            Command::new("bash")
+                .arg("-c")
+                .arg(command)
+                .output()
+        };
 
         match output {
             Ok(result) => {
@@ -112,17 +119,18 @@ impl Handler<Connect> for Lobby {
             .or_insert_with(HashSet::new)
             .insert(msg.self_id);
 
-        self.rooms
-            .get(&msg.lobby_id)
-            .unwrap()
-            .iter()
-            .for_each(|conn_id| {
-                self.send_message(&format!("{} just joined!", msg.self_id), conn_id)
-            });
-
         self.sessions.insert(msg.self_id, msg.addr);
 
-        self.send_message(&format!("your id is {}", msg.self_id), &msg.self_id);
+        // Send JSON formatted welcome message
+        let welcome_message = serde_json::json!({
+            "type": "system_message",
+            "payload": {
+                "message": format!("Connected! Your session ID is {}", msg.self_id),
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            }
+        });
+        
+        self.send_message(&welcome_message.to_string(), &msg.self_id);
     }
 }
 
@@ -133,29 +141,46 @@ impl Handler<ClientActorMessage> for Lobby {
         // Try to parse as JSON command
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&msg.msg) {
             if let Some(msg_type) = parsed["type"].as_str() {
-                if msg_type == "command" {
-                    if let Some(command) = parsed["payload"]["command"].as_str() {
-                        self.execute_command(command, &msg.id);
+                match msg_type {
+                    "command" => {
+                        if let Some(command) = parsed["payload"]["command"].as_str() {
+                            self.execute_command(command, &msg.id);
+                            return;
+                        }
+                    }
+                    "ping" => {
+                        // Respond with pong
+                        let pong_response = serde_json::json!({
+                            "type": "pong",
+                            "payload": {
+                                "timestamp": chrono::Utc::now().to_rfc3339()
+                            }
+                        });
+                        self.send_message(&pong_response.to_string(), &msg.id);
                         return;
+                    }
+                    _ => {
+                        // Handle other message types or echo back
+                        println!("Received message type: {}", msg_type);
                     }
                 }
             }
         }
 
-        // Handle whisper and broadcast as before
+        // Handle legacy whisper and broadcast (keep for compatibility)
         if msg.msg.starts_with("\\w") {
             if let Some(id_to) = msg.msg.split(' ').nth(1) {
-                self.send_message(
-                    &msg.msg,
-                    &Vvid::parse_str(id_to).unwrap(),
-                );
+                if let Ok(uuid) = Uuid::parse_str(id_to) {
+                    self.send_message(&msg.msg, &uuid);
+                }
             }
         } else {
-            self.rooms
-                .get(&msg.room_id)
-                .unwrap()
-                .iter()
-                .for_each(|client| self.send_message(&msg.msg, client));
+            // Broadcast to all users in the room
+            if let Some(room_users) = self.rooms.get(&msg.room_id) {
+                for client in room_users {
+                    self.send_message(&msg.msg, client);
+                }
+            }
         }
     }
 }
