@@ -9,13 +9,16 @@ class WebSocketService {
     this.maxReconnectAttempts = 5;
     this.reconnectInterval = 1000;
     this.shouldReconnect = true;
-    this.connectionUrl = 'ws://localhost:8080/ws/test-room'; // Added room ID to match backend route
+    this.connectionUrl = 'ws://localhost:8080/ws/test-room';
     this.connectionTimeout = 10000;
     this.connectionTimeoutId = null;
     this.connectTime = null;
     this.pingInterval = null;
-    this.pingIntervalTime = 30000;
-    this.connectionEstablished = false; // Track if connection was properly established
+    this.pingIntervalTime = 25000; // Send ping every 25 seconds (slightly less than server's 30s)
+    this.connectionEstablished = false;
+    this.lastPongReceived = null; // Track when we last received a pong
+    this.missedPongs = 0; // Count missed pongs
+    this.maxMissedPongs = 3; // Max missed pongs before considering connection dead
   }
 
   connect(url = this.connectionUrl) {
@@ -97,9 +100,24 @@ class WebSocketService {
           const message = JSON.parse(event.data);
           console.log('Parsed message:', message);
           
-          // Handle pong responses
+          // Handle server ping - respond with pong immediately
+          if (message.type === 'ping') {
+            console.log('Received ping from server, sending pong');
+            const pongMessage = {
+              type: 'pong',
+              timestamp: Date.now(),
+              client_id: 'http-ssh-client'
+            };
+            this.ws.send(JSON.stringify(pongMessage));
+            this.hb = Date.now(); // Update heartbeat time
+            return;
+          }
+          
+          // Handle server pong responses to our pings
           if (message.type === 'pong') {
             console.log('Received pong from server');
+            this.lastPongReceived = Date.now();
+            this.missedPongs = 0; // Reset missed pong counter
             return;
           }
           
@@ -383,21 +401,56 @@ class WebSocketService {
     this.shouldReconnect = true;
   }
 
-  // Start ping mechanism to keep connection alive
+  // Enhanced ping mechanism with pong tracking
   startPing() {
     // Clear any existing ping interval
     this.stopPing();
     
+    // Initialize tracking variables
+    this.lastPongReceived = Date.now();
+    this.missedPongs = 0;
+    
     this.pingInterval = setInterval(() => {
       if (this.isConnected && this.ws) {
         try {
+          // Check if we've missed too many pongs
+          const timeSinceLastPong = Date.now() - (this.lastPongReceived || Date.now());
+          const expectedPongInterval = this.pingIntervalTime * 1.5; // Allow 1.5x ping interval for pong
+          
+          if (timeSinceLastPong > expectedPongInterval) {
+            this.missedPongs++;
+            console.warn(`Missed pong #${this.missedPongs}, time since last pong: ${Math.round(timeSinceLastPong/1000)}s`);
+            
+            if (this.missedPongs >= this.maxMissedPongs) {
+              console.error(`Connection appears dead - missed ${this.missedPongs} pongs. Closing connection.`);
+              this.ws.close(1006, 'Connection timeout - no pong responses');
+              return;
+            }
+          }
+          
           console.log('Sending ping to server');
-          this.sendMessage('ping', { timestamp: Date.now() });
+          const pingMessage = {
+            type: 'ping',
+            timestamp: Date.now(),
+            client_id: 'http-ssh-client'
+          };
+          this.ws.send(JSON.stringify(pingMessage));
+          
+          // Also send a WebSocket protocol ping as backup
+          if (this.ws.readyState === WebSocket.OPEN) {
+            this.ws.ping && this.ws.ping();
+          }
+          
         } catch (error) {
           console.error('Failed to send ping:', error);
+          this.missedPongs++;
         }
+      } else {
+        console.log('Skipping ping - not connected');
       }
     }, this.pingIntervalTime);
+    
+    console.log(`Started ping mechanism with ${this.pingIntervalTime}ms interval`);
   }
 
   // Stop ping mechanism
@@ -405,7 +458,11 @@ class WebSocketService {
     if (this.pingInterval) {
       clearInterval(this.pingInterval);
       this.pingInterval = null;
+      console.log('Stopped ping mechanism');
     }
+    // Reset tracking variables
+    this.lastPongReceived = null;
+    this.missedPongs = 0;
   }
 }
 

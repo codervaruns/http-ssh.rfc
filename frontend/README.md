@@ -36,9 +36,12 @@ The application is configured to connect to the backend server at `ws://localhos
 ### Default Settings
 
 - **Frontend Port**: 3001 (configured in package.json)
-- **Backend WebSocket URL**: `ws://localhost:3000/ws`
+- **Backend WebSocket URL**: `ws://localhost:8080/ws`
 - **Reconnection Attempts**: 5 maximum attempts
-- **Ping Interval**: 30 seconds to keep connection alive
+- **Ping Interval**: 25 seconds (client to server keepalive)
+- **Server Ping Interval**: 30 seconds (server to client keepalive)
+- **Connection Timeout**: 10 seconds for initial connection
+- **Pong Timeout**: 3 missed pongs before considering connection dead
 
 ## Running the Application
 
@@ -83,6 +86,8 @@ The build files will be generated in the `build/` directory.
 - **Error Display**: stderr output is displayed in red
 - **System Messages**: Connection status and system information
 - **Clear Output**: Button to clear the terminal display
+- **Keepalive Mechanism**: Automatic ping/pong to prevent connection timeouts
+- **Connection Health Monitoring**: Tracks missed pongs and connection quality
 
 ## Project Structure
 
@@ -106,8 +111,26 @@ The `WebSocketService` class handles all WebSocket communication:
 - **Connection Management**: Automatic connection, disconnection, and reconnection
 - **Message Handling**: Parsing and routing of WebSocket messages
 - **Error Recovery**: Exponential backoff reconnection strategy
-- **Keep-Alive**: Ping/pong mechanism to maintain connection
+- **Bidirectional Keepalive**: Both client-to-server and server-to-client ping/pong
+- **Connection Health Monitoring**: Tracks pong responses and detects dead connections
 - **Event Handlers**: Customizable handlers for messages and connection events
+
+### Keepalive System
+
+The application implements a robust keepalive system to prevent connection timeouts:
+
+**Client-side (25s interval)**:
+- Sends JSON ping messages to server
+- Tracks pong responses
+- Closes connection after 3 missed pongs
+- Falls back to WebSocket protocol pings
+
+**Server-side (30s interval)**:
+- Sends JSON ping messages to clients
+- Automatically responds to client pings with pongs
+- Handles both JSON and WebSocket protocol ping/pong
+
+This dual approach ensures connections remain active through firewalls, NAT, and proxy servers that might timeout idle connections.
 
 ## Troubleshooting
 
