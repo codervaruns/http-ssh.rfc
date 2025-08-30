@@ -238,9 +238,24 @@ function App() {
     AutoCompleteService.setCurrentDirectory(newPath);
   }, []);
 
-  // Send command to server
-  const sendCommand = (cmd) => {
+  // Send command to server with deduplication
+  const lastSentCommandRef = useRef('');
+  const lastSentTimeRef = useRef(0);
+  
+  const sendCommand = useCallback((cmd) => {
     if (isConnected) {
+      const now = Date.now();
+      const timeSinceLastCommand = now - lastSentTimeRef.current;
+      
+      // Prevent duplicate commands sent within 500ms
+      if (cmd === lastSentCommandRef.current && timeSinceLastCommand < 500) {
+        console.log('Ignoring duplicate command:', cmd);
+        return true;
+      }
+      
+      lastSentCommandRef.current = cmd;
+      lastSentTimeRef.current = now;
+      
       // Add command to AutoCompleteService history
       AutoCompleteService.addToHistory(cmd.trim());
       
@@ -266,10 +281,13 @@ function App() {
       } else {
         addSystemMessage('Failed to send command');
       }
+      
+      return success;
     } else {
       addSystemMessage('Not connected to server');
+      return false;
     }
-  };
+  }, [isConnected, addSystemMessage]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -480,12 +498,7 @@ function App() {
         {showFileExplorer && (
           <FileExplorer 
             isConnected={isConnected}
-            onSendCommand={(command) => {
-              if (isConnected) {
-                return WebSocketService.sendCommand(command);
-              }
-              return false;
-            }}
+            onSendCommand={sendCommand}
             onDirectoryChange={handleDirectoryChange}
             onDirectoryContentsLoaded={handleDirectoryContentsLoaded}
             commandOutput={lastCommandOutput}

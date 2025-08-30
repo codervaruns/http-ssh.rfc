@@ -66,7 +66,7 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
         }
       }
     }
-  }, [commandOutput, lastListCommand, currentPath, onDirectoryChange, onDirectoryContentsLoaded]);
+  }, [commandOutput, lastListCommand]); // Removed currentPath and onDirectoryChange dependencies
 
   const loadDirectory = useCallback((path) => {
     if (!isConnected) {
@@ -81,6 +81,12 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
     
     // Normalize the path
     const normalizedPath = path.replace(/\/+/g, '/');
+    
+    // Prevent duplicate requests for the same path
+    if (lastListCommand === `ls -la "${normalizedPath}"`) {
+      console.log('LoadDirectory blocked: same command already sent');
+      return;
+    }
     
     console.log('Loading directory:', normalizedPath);
     setLoading(true);
@@ -118,17 +124,21 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
       setLastListCommand('');
       timeoutRef.current = null;
     }, 5000);
-  }, [isConnected, onSendCommand]);
+  }, [isConnected, onSendCommand, lastListCommand]);
 
+  const initialLoadRef = useRef(false);
+  
   useEffect(() => {
     console.log('Connection status changed:', isConnected);
-    if (isConnected) {
+    if (isConnected && !initialLoadRef.current) {
+      initialLoadRef.current = true;
       // Small delay to ensure connection is fully established
       setTimeout(() => {
         console.log('Loading initial directory');
         loadDirectory('/');
       }, 500);
-    } else {
+    } else if (!isConnected) {
+      initialLoadRef.current = false;
       setDirectoryItems([]);
       setError('');
       pendingRequestRef.current = false;
