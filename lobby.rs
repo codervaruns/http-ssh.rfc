@@ -341,9 +341,3 @@ impl Handler<ClientActorMessage> for Lobby {
         }
     }
 }
-                }
-            }
-        }
-    }
-}
-
