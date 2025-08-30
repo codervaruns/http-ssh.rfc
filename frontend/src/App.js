@@ -243,7 +243,7 @@ function App() {
       WebSocketService.removeConnectionHandler(handleConnection);
       WebSocketService.disconnect();
     };
-  }, [addSystemMessage]); // Remove idCounter dependency
+  }, [addSystemMessage, currentDirectory]); // Added currentDirectory dependency
 
   // Auto-scroll output to bottom
   useEffect(() => {

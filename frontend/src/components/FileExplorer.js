@@ -66,7 +66,7 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
         }
       }
     }
-  }, [commandOutput, lastListCommand]); // Removed currentPath and onDirectoryChange dependencies
+  }, [commandOutput, lastListCommand, currentPath, onDirectoryChange, onDirectoryContentsLoaded]);
 
   const loadDirectory = useCallback((path) => {
     if (!isConnected) {
