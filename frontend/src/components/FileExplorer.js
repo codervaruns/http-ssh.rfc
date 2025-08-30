@@ -147,7 +147,7 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
       }
     }
     // Removed automatic directory loading - wait for server to provide current directory
-  }, [isConnected, loadDirectory]);
+  }, [isConnected]);
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -246,13 +246,13 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
       // Send cd command with relative path
       onSendCommand(`cd ${targetPath}`);
       
-      // Small delay to let cd command complete
+      // Small delay to let cd command complete, then manually load directory
       setTimeout(() => {
         if (!pendingRequestRef.current) {
-          // Load current directory after cd
+          console.log('Manually loading directory after cd');
           loadDirectory('.');
         }
-      }, 100);
+      }, 150);
     } else {
       // For files, show file info using relative path
       const filePath = item.name;
@@ -270,9 +270,10 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
     onSendCommand('cd ..');
     setTimeout(() => {
       if (!pendingRequestRef.current) {
+        console.log('Manually loading directory after cd ..');
         loadDirectory('.');
       }
-    }, 100);
+    }, 150);
   };
 
   const refreshCurrent = () => {
@@ -281,19 +282,6 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
       loadDirectory('.');
     }
   };
-
-  // Listen for directory changes from the terminal/server and load directory contents
-  useEffect(() => {
-    if (currentPath && isConnected && !pendingRequestRef.current) {
-      console.log('Current directory changed to:', currentPath);
-      // Small delay to let any pending operations complete
-      setTimeout(() => {
-        if (!pendingRequestRef.current) {
-          loadDirectory(currentPath);
-        }
-      }, 200);
-    }
-  }, [currentPath, isConnected, loadDirectory]);
 
   return (
     <div className="file-explorer">
