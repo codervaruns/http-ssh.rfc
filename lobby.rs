@@ -94,7 +94,7 @@ impl Lobby {
 
         match child {
             Ok(mut process) => {
-                let timeout = Duration::from_secs(5); // ⏱️ adjust as needed
+                let timeout = Duration::from_secs(15); // ⏱️ adjust as needed
                 match process.wait_timeout(timeout).unwrap() {
                     Some(status) => {
                         // Completed in time
@@ -314,3 +314,4 @@ impl Handler<ClientActorMessage> for Lobby {
         }
     }
 }
+
