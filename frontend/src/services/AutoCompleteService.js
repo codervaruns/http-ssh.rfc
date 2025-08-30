@@ -14,6 +14,7 @@ class AutoCompleteService {
     this.commandHistory = [];
     this.currentDirectory = '/';
     this.directoryContents = new Map(); // Cache directory contents
+    this.pendingDirectoryRequests = new Map(); // Track pending ls commands
   }
 
   // Update command history
@@ -40,7 +41,6 @@ class AutoCompleteService {
   // Get completions for the current input
   getCompletions(input, cursorPosition = input.length) {
     const beforeCursor = input.slice(0, cursorPosition);
-    const afterCursor = input.slice(cursorPosition);
     
     // Split by spaces to find the current token
     const tokens = beforeCursor.split(/\s+/);
@@ -103,6 +103,9 @@ class AutoCompleteService {
         break;
       case 'chmod':
         suggestions.push(...this.getChmodCompletions(partial));
+        break;
+      default:
+        // No specific completions for this command
         break;
     }
     
@@ -279,6 +282,88 @@ class AutoCompleteService {
     }
     
     return '/' + parts.join('/');
+  }
+
+  // Parse ls command output to extract directory contents
+  parseDirectoryListing(output, path) {
+    const items = [];
+    if (!output || typeof output !== 'string') return items;
+
+    const lines = output.split('\n').filter(line => line.trim());
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('total ') || trimmed === '') continue;
+      
+      // Parse Unix ls -la format
+      const unixMatch = trimmed.match(/^([d-])([rwx-]{9})\s+\d+\s+\S+\s+\S+\s+\d+\s+\S+\s+\d+\s+[\d:]+\s+(.+)$/);
+      if (unixMatch) {
+        const [, type, permissions, name] = unixMatch;
+        if (name && name !== '.' && name !== '..') {
+          items.push({
+            name,
+            isDirectory: type === 'd',
+            permissions: type + permissions
+          });
+        }
+        continue;
+      }
+
+      // Parse Windows dir format
+      const windowsMatch = trimmed.match(/^(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2}\s+[AP]M)\s+(<DIR>|\d+)\s+(.+)$/);
+      if (windowsMatch) {
+        const [, , , sizeOrDir, name] = windowsMatch;
+        if (name && name !== '.' && name !== '..') {
+          items.push({
+            name,
+            isDirectory: sizeOrDir === '<DIR>',
+            permissions: sizeOrDir === '<DIR>' ? 'drwxr-xr-x' : '-rw-r--r--'
+          });
+        }
+        continue;
+      }
+
+      // Simple fallback - treat lines as filenames
+      if (trimmed.length > 0 && !trimmed.includes('Permission denied') && 
+          !trimmed.includes('No such file') && !trimmed.includes('cannot access')) {
+        // Try to detect if it's likely a directory (common directory names)
+        const isLikelyDir = /^(bin|etc|home|usr|var|tmp|opt|Documents|Downloads|Desktop|Pictures|Music|Videos)$/i.test(trimmed);
+        items.push({
+          name: trimmed,
+          isDirectory: isLikelyDir,
+          permissions: isLikelyDir ? 'drwxr-xr-x' : '-rw-r--r--'
+        });
+      }
+    }
+
+    return items;
+  }
+
+  // Handle command output for directory listing
+  handleCommandOutput(command, stdout, stderr) {
+    if (!command) return null;
+
+    // Check if this is a directory listing command
+    const lsMatch = command.match(/^(?:ls|dir)\s+(?:-[la]+\s+)?["']?([^"']+)["']?/);
+    if (lsMatch) {
+      const path = lsMatch[1] || this.currentDirectory;
+      const normalizedPath = this.normalizePath(path);
+      
+      if (stdout) {
+        const items = this.parseDirectoryListing(stdout, normalizedPath);
+        this.cacheDirectoryContents(normalizedPath, items);
+        return { type: 'directory_listing', path: normalizedPath, items };
+      }
+    }
+
+    return null;
+  }
+
+  // Normalize path for consistent caching
+  normalizePath(path) {
+    if (!path || path === '.') return this.currentDirectory;
+    if (path.startsWith('/')) return path;
+    return this.resolvePath(this.currentDirectory, path);
   }
 }
 

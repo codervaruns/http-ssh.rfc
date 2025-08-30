@@ -95,7 +95,12 @@ The build files will be generated in the `build/` directory.
 frontend/
 ├── public/                 # Static assets
 ├── src/
+│   ├── components/
+│   │   ├── AutoComplete.js        # Auto-completion dropdown component
+│   │   ├── FileExplorer.js        # File browser component
+│   │   └── FileExplorer.css       # File explorer styles
 │   ├── services/
+│   │   ├── AutoCompleteService.js # Command completion and directory parsing
 │   │   └── WebSocketService.js    # WebSocket connection management
 │   ├── App.js             # Main application component
 │   ├── App.css            # Application styles

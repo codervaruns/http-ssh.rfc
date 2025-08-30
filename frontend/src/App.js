@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import WebSocketService from './services/WebSocketService';
 import AutoCompleteService from './services/AutoCompleteService';
 import FileExplorer from './components/FileExplorer';
@@ -10,7 +10,7 @@ function App() {
   const generateUUID = () => {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
       const r = Math.random() * 16 | 0;
-      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      const v = c === 'x' ? r : ((r & 0x3) | 0x8);
       return v.toString(16);
     });
   };
@@ -24,6 +24,7 @@ function App() {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [currentDirectory, setCurrentDirectory] = useState('/');
   const [showFileExplorer, setShowFileExplorer] = useState(true);
+  const [lastCommandOutput, setLastCommandOutput] = useState(null);
   
   // Auto-completion state variables
   const [autoCompleteVisible, setAutoCompleteVisible] = useState(false);
@@ -40,7 +41,7 @@ function App() {
     return `${Date.now()}-${idCounterRef.current}`;
   };
 
-  const addSystemMessage = (message) => {
+  const addSystemMessage = useCallback((message) => {
     const systemOutput = {
       id: generateId(),
       command: '',
@@ -51,7 +52,7 @@ function App() {
       isSystem: true
     };
     setOutput(prev => [...prev, systemOutput]);
-  };
+  }, []);
 
   useEffect(() => {
     // Set up WebSocket message handler
@@ -69,6 +70,19 @@ function App() {
         };
         
         setOutput(prev => [...prev, newOutput]);
+        setLastCommandOutput(newOutput);
+        
+        // Handle directory listing for auto-completion
+        const autoCompleteResult = AutoCompleteService.handleCommandOutput(
+          newOutput.command, 
+          newOutput.stdout, 
+          newOutput.stderr
+        );
+        
+        if (autoCompleteResult && autoCompleteResult.type === 'directory_listing') {
+          // The AutoCompleteService has already cached the directory contents
+          console.log('Directory contents cached for path:', autoCompleteResult.path);
+        }
       } else if (message.type === 'stdout' || message.type === 'stderr') {
         // Handle streaming output chunks
         const streamOutput = {
@@ -185,7 +199,7 @@ function App() {
       WebSocketService.removeConnectionHandler(handleConnection);
       WebSocketService.disconnect();
     };
-  }, []); // Remove idCounter dependency
+  }, [addSystemMessage]); // Remove idCounter dependency
 
   // Auto-scroll output to bottom
   useEffect(() => {
@@ -243,7 +257,12 @@ function App() {
     setAutoCompleteVisible(false);
   };
 
-  const updateAutoComplete = (inputValue, cursorPosition) => {
+  const updateAutoComplete = (inputValue, cursorPosition, forceShow = false) => {
+    if (!forceShow) {
+      setAutoCompleteVisible(false);
+      return;
+    }
+
     if (!inputValue.trim()) {
       setAutoCompleteVisible(false);
       return;
@@ -275,10 +294,15 @@ function App() {
   const handleInputChange = (e) => {
     const value = e.target.value;
     setCommand(value);
-    updateAutoComplete(value, e.target.selectionStart);
+    // Don't automatically trigger autocomplete on input change
   };
 
   const handleKeyDown = (e) => {
+    // Hide autocomplete on spacebar (but not Ctrl+Space)
+    if (e.key === ' ' && !e.ctrlKey && autoCompleteVisible) {
+      setAutoCompleteVisible(false);
+    }
+
     // Handle auto-completion navigation
     if (autoCompleteVisible) {
       if (e.key === 'ArrowDown') {
@@ -316,7 +340,6 @@ function App() {
         const newIndex = historyIndex === -1 ? commandHistory.length - 1 : Math.max(0, historyIndex - 1);
         setHistoryIndex(newIndex);
         setCommand(commandHistory[newIndex]);
-        updateAutoComplete(commandHistory[newIndex], commandHistory[newIndex].length);
       }
     } else if (e.key === 'ArrowDown' && !autoCompleteVisible) {
       e.preventDefault();
@@ -325,11 +348,9 @@ function App() {
         if (newIndex >= commandHistory.length) {
           setHistoryIndex(-1);
           setCommand('');
-          setAutoCompleteVisible(false);
         } else {
           setHistoryIndex(newIndex);
           setCommand(commandHistory[newIndex]);
-          updateAutoComplete(commandHistory[newIndex], commandHistory[newIndex].length);
         }
       }
     }
@@ -337,7 +358,7 @@ function App() {
     // Show auto-complete on Ctrl+Space
     if (e.ctrlKey && e.key === ' ') {
       e.preventDefault();
-      updateAutoComplete(command, e.target.selectionStart);
+      updateAutoComplete(command, e.target.selectionStart, true);
     }
   };
 
@@ -447,6 +468,7 @@ function App() {
             }}
             onDirectoryChange={handleDirectoryChange}
             onDirectoryContentsLoaded={handleDirectoryContentsLoaded}
+            commandOutput={lastCommandOutput}
           />
         )}
         
@@ -486,7 +508,6 @@ function App() {
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 onBlur={() => setTimeout(() => setAutoCompleteVisible(false), 200)}
-                onFocus={() => updateAutoComplete(command, command.length)}
                 className="command-input"
                 placeholder="Enter command... (Ctrl+Space for suggestions)"
                 autoFocus

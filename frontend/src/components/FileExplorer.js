@@ -1,42 +1,134 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import './FileExplorer.css';
 
-const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirectoryContentsLoaded }) => {
+const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirectoryContentsLoaded, commandOutput }) => {
   const [currentPath, setCurrentPath] = useState('/');
   const [directoryItems, setDirectoryItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [lastListCommand, setLastListCommand] = useState('');
 
+  // Listen for command output that might be directory listings
   useEffect(() => {
-    if (isConnected) {
-      loadDirectory('/');
+    if (commandOutput && commandOutput.command && commandOutput.stdout) {
+      const command = commandOutput.command.trim();
+      
+      // Check if this is a directory listing command we sent
+      if (command === lastListCommand || 
+          command.match(/^(?:ls|dir)\s+(?:-[la]+\s+)?/)) {
+        
+        try {
+          const items = parseDirectoryOutput(commandOutput.stdout, currentPath);
+          if (items.length > 0 || commandOutput.stdout.includes('total ')) {
+            setDirectoryItems(items);
+            setError('');
+            
+            // Notify parent about directory contents for auto-completion
+            if (onDirectoryContentsLoaded) {
+              onDirectoryContentsLoaded(currentPath, items);
+            }
+          }
+        } catch (err) {
+          console.error('Error parsing directory output:', err);
+          setError('Failed to parse directory listing');
+        }
+        
+        setLoading(false);
+        setLastListCommand('');
+      }
     }
-  }, [isConnected]);
+  }, [commandOutput, lastListCommand, currentPath, onDirectoryContentsLoaded]);
 
-  const loadDirectory = async (path) => {
+  const loadDirectory = useCallback(async (path) => {
     if (!isConnected) return;
     
     setLoading(true);
     setError('');
     
-    // Send ls command to get directory contents
-    const command = `ls -la "${path}" 2>/dev/null || dir "${path}" 2>nul`;
-    const success = onSendCommand(command);
+    // Determine the appropriate command based on the platform
+    const listCommand = `ls -la "${path}"`;
+    setLastListCommand(listCommand);
+    
+    const success = onSendCommand(listCommand);
     
     if (!success) {
       setError('Failed to send directory listing command');
       setLoading(false);
+      setLastListCommand('');
       return;
     }
     
-    // Notify parent about directory contents for auto-completion
-    if (onDirectoryContentsLoaded) {
-      onDirectoryContentsLoaded(path, sampleItems);
+    // Set timeout to stop loading if no response
+    setTimeout(() => {
+      if (loading) {
+        setLoading(false);
+        if (directoryItems.length === 0) {
+          setError('No response from server');
+        }
+      }
+    }, 5000);
+  }, [isConnected, onSendCommand, loading, directoryItems.length]);
+
+  useEffect(() => {
+    if (isConnected) {
+      loadDirectory('/');
+    } else {
+      setDirectoryItems([]);
+      setError('');
     }
+  }, [isConnected, loadDirectory]);
+
+  const parseDirectoryOutput = (output, path) => {
+    const items = [];
+    if (!output || typeof output !== 'string') return items;
+
+    const lines = output.split('\n').filter(line => line.trim());
     
-    // Note: The actual parsing will happen when we receive the response
-    // This is a limitation of the current WebSocket implementation
-    setTimeout(() => setLoading(false), 2000);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('total ') || trimmed === '') continue;
+      
+      // Parse Unix ls -la format
+      const unixMatch = trimmed.match(/^([d-])([rwx-]{9})\s+\d+\s+\S+\s+\S+\s+\d+\s+\S+\s+\d+\s+[\d:]+\s+(.+)$/);
+      if (unixMatch) {
+        const [, type, permissions, name] = unixMatch;
+        if (name && name !== '.') {
+          items.push({
+            name,
+            isDirectory: type === 'd',
+            permissions: type + permissions
+          });
+        }
+        continue;
+      }
+
+      // Parse Windows dir format
+      const windowsMatch = trimmed.match(/^(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2}\s+[AP]M)\s+(<DIR>|\d+)\s+(.+)$/);
+      if (windowsMatch) {
+        const [, , , sizeOrDir, name] = windowsMatch;
+        if (name && name !== '.') {
+          items.push({
+            name,
+            isDirectory: sizeOrDir === '<DIR>',
+            permissions: sizeOrDir === '<DIR>' ? 'drwxr-xr-x' : '-rw-r--r--'
+          });
+        }
+        continue;
+      }
+
+      // Simple format fallback
+      if (trimmed.length > 0 && !trimmed.includes('Permission denied') && 
+          !trimmed.includes('No such file') && !trimmed.includes('cannot access') &&
+          !trimmed.includes('ls:') && !trimmed.includes('dir:')) {
+        items.push({
+          name: trimmed,
+          isDirectory: false, // Default to file unless we can determine otherwise
+          permissions: '-rw-r--r--'
+        });
+      }
+    }
+
+    return items;
   };
 
   const handleItemClick = (item) => {
@@ -47,12 +139,14 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
       
       setCurrentPath(newPath);
       onDirectoryChange(newPath);
+      
+      // Send cd command and then list the new directory
       onSendCommand(`cd "${newPath}"`);
-      loadDirectory(newPath);
+      setTimeout(() => loadDirectory(newPath), 100);
     } else {
       // For files, show file info
       const filePath = `${currentPath}/${item.name}`.replace(/\/+/g, '/');
-      onSendCommand(`file "${filePath}"`);
+      onSendCommand(`file "${filePath}" 2>/dev/null || echo "File: ${filePath}"`);
     }
   };
 
@@ -63,27 +157,12 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
     setCurrentPath(parentPath);
     onDirectoryChange(parentPath);
     onSendCommand(`cd "${parentPath}"`);
-    loadDirectory(parentPath);
+    setTimeout(() => loadDirectory(parentPath), 100);
   };
 
   const refreshCurrent = () => {
     loadDirectory(currentPath);
   };
-
-  // Sample directory items for demonstration
-  const sampleItems = [
-    ...(currentPath !== '/' ? [{ 
-      name: '..', 
-      isDirectory: true, 
-      permissions: 'drwxr-xr-x' 
-    }] : []),
-    { name: 'Documents', isDirectory: true, permissions: 'drwxr-xr-x' },
-    { name: 'Downloads', isDirectory: true, permissions: 'drwxr-xr-x' },
-    { name: 'example.txt', isDirectory: false, permissions: '-rw-r--r--' },
-    { name: 'script.sh', isDirectory: false, permissions: '-rwxr-xr-x' },
-  ];
-
-  const itemsToShow = directoryItems.length > 0 ? directoryItems : (isConnected ? sampleItems : []);
 
   return (
     <div className="file-explorer">
@@ -121,12 +200,14 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
           <div className="explorer-message error">{error}</div>
         ) : loading ? (
           <div className="explorer-message">Loading directory...</div>
+        ) : directoryItems.length === 0 ? (
+          <div className="explorer-message">Directory is empty or no data received</div>
         ) : (
           <div className="tree-content">
             <div className="tree-instructions">
               Click folders to navigate, files to inspect
             </div>
-            {itemsToShow.map((item, index) => (
+            {directoryItems.map((item, index) => (
               <div 
                 key={`${item.name}-${index}`} 
                 className="tree-item"
