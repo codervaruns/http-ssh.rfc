@@ -14,7 +14,7 @@ class AutoCompleteService {
     this.commandHistory = [];
     this.currentDirectory = '/';
     this.directoryContents = new Map(); // Cache directory contents
-    this.pendingDirectoryRequests = new Map(); // Track pending ls commands
+    this.pendingDirectoryRequests = new Set(); // Track pending ls commands to prevent duplicates
   }
 
   // Update command history
@@ -349,6 +349,9 @@ class AutoCompleteService {
       const path = lsMatch[1] || this.currentDirectory;
       const normalizedPath = this.normalizePath(path);
       
+      // Remove from pending requests
+      this.pendingDirectoryRequests.delete(normalizedPath);
+      
       if (stdout) {
         const items = this.parseDirectoryListing(stdout, normalizedPath);
         this.cacheDirectoryContents(normalizedPath, items);
@@ -357,6 +360,24 @@ class AutoCompleteService {
     }
 
     return null;
+  }
+
+  // Check if a directory listing request is already pending
+  isDirectoryRequestPending(path) {
+    const normalizedPath = this.normalizePath(path);
+    return this.pendingDirectoryRequests.has(normalizedPath);
+  }
+
+  // Mark a directory listing request as pending
+  markDirectoryRequestPending(path) {
+    const normalizedPath = this.normalizePath(path);
+    this.pendingDirectoryRequests.add(normalizedPath);
+  }
+
+  // Clear pending request (useful for error cases)
+  clearPendingDirectoryRequest(path) {
+    const normalizedPath = this.normalizePath(path);
+    this.pendingDirectoryRequests.delete(normalizedPath);
   }
 
   // Normalize path for consistent caching

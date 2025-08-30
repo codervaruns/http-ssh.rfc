@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './FileExplorer.css';
 
 const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirectoryContentsLoaded, commandOutput }) => {
@@ -7,6 +7,10 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [lastListCommand, setLastListCommand] = useState('');
+  
+  // Use ref to track timeout and prevent memory leaks
+  const timeoutRef = useRef(null);
+  const pendingRequestRef = useRef(false);
 
   // Listen for command output that might be directory listings
   useEffect(() => {
@@ -35,15 +39,28 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
         
         setLoading(false);
         setLastListCommand('');
+        pendingRequestRef.current = false;
+        
+        // Clear timeout if response received
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
+        }
       }
     }
   }, [commandOutput, lastListCommand, currentPath, onDirectoryContentsLoaded]);
 
-  const loadDirectory = useCallback(async (path) => {
-    if (!isConnected) return;
+  const loadDirectory = useCallback((path) => {
+    if (!isConnected || pendingRequestRef.current) return;
     
     setLoading(true);
     setError('');
+    pendingRequestRef.current = true;
+    
+    // Clear any existing timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
     
     // Determine the appropriate command based on the platform
     const listCommand = `ls -la "${path}"`;
@@ -55,19 +72,20 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
       setError('Failed to send directory listing command');
       setLoading(false);
       setLastListCommand('');
+      pendingRequestRef.current = false;
       return;
     }
     
     // Set timeout to stop loading if no response
-    setTimeout(() => {
-      if (loading) {
-        setLoading(false);
-        if (directoryItems.length === 0) {
-          setError('No response from server');
-        }
+    timeoutRef.current = setTimeout(() => {
+      setLoading(false);
+      pendingRequestRef.current = false;
+      if (directoryItems.length === 0) {
+        setError('No response from server');
       }
+      timeoutRef.current = null;
     }, 5000);
-  }, [isConnected, onSendCommand, loading, directoryItems.length]);
+  }, [isConnected, onSendCommand]); // Removed loading and directoryItems.length from dependencies
 
   useEffect(() => {
     if (isConnected) {
@@ -75,8 +93,22 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
     } else {
       setDirectoryItems([]);
       setError('');
+      pendingRequestRef.current = false;
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
     }
   }, [isConnected, loadDirectory]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
 
   const parseDirectoryOutput = (output, path) => {
     const items = [];
@@ -161,7 +193,9 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
   };
 
   const refreshCurrent = () => {
-    loadDirectory(currentPath);
+    if (!pendingRequestRef.current) {
+      loadDirectory(currentPath);
+    }
   };
 
   return (
