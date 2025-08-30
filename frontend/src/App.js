@@ -127,11 +127,40 @@ function App() {
         }
       } else if (event.type === 'error') {
         const errorMsg = event.error?.message || 'Unknown connection error';
-        addSystemMessage(`✗ Connection error: ${errorMsg}`);
+        
+        if (event.isCircuitBreakerOpen) {
+          addSystemMessage(`⊘ Connection attempts suspended: ${errorMsg}`);
+          addSystemMessage(`  • Too many recent failures detected`);
+          addSystemMessage(`  • Will retry automatically when conditions improve`);
+        } else if (event.isFirewallIssue) {
+          addSystemMessage(`✗ Firewall/Network Issue: ${errorMsg}`);
+          addSystemMessage(`  • Multiple connection patterns suggest firewall blocking`);
+          addSystemMessage(`  • Try connecting from a different network`);
+          addSystemMessage(`  • Contact network administrator if on corporate network`);
+        } else if (event.isHealthCheckFailure) {
+          addSystemMessage(`✗ Server Health Check Failed: ${errorMsg}`);
+          addSystemMessage(`  • Server may be down or restarting`);
+          addSystemMessage(`  • Check server logs for errors`);
+          addSystemMessage(`  • Verify server is running on correct port`);
+        } else {
+          addSystemMessage(`✗ Connection error: ${errorMsg}`);
+        }
       } else if (event.type === 'reconnecting') {
-        addSystemMessage(`⟳ Reconnecting... (attempt ${event.attempt}/${event.maxAttempts})`);
+        const strategyMsg = event.firewallDetected ? ' (firewall detected, using aggressive retry)' : '';
+        addSystemMessage(`⟳ Reconnecting... (attempt ${event.attempt}/${event.maxAttempts})${strategyMsg}`);
+      } else if (event.type === 'reconnect_delayed') {
+        if (event.reason === 'circuit_breaker_open') {
+          addSystemMessage(`⏸ Reconnection paused for ${event.retryAfter}s (circuit breaker active)`);
+        }
       } else if (event.type === 'reconnect_failed') {
-        addSystemMessage(`✗ Failed to reconnect after ${event.attempts} attempts. Please check server status and click Connect to try again.`);
+        if (event.reason === 'max_consecutive_failures') {
+          addSystemMessage(`✗ Failed to reconnect after ${event.consecutiveFailures} consecutive failures.`);
+          addSystemMessage(`  • Server may be permanently unavailable`);
+          addSystemMessage(`  • Check server status and network connectivity`);
+          addSystemMessage(`  • Click Connect to retry manually`);
+        } else {
+          addSystemMessage(`✗ Failed to reconnect after ${event.attempts} attempts. Please check server status and click Connect to try again.`);
+        }
       }
     };
 

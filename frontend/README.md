@@ -130,7 +130,29 @@ The application implements a robust keepalive system to prevent connection timeo
 - Automatically responds to client pings with pongs
 - Handles both JSON and WebSocket protocol ping/pong
 
-This dual approach ensures connections remain active through firewalls, NAT, and proxy servers that might timeout idle connections.
+### Enhanced Retry Logic for Firewall Issues
+
+The application includes sophisticated retry logic to handle firewall and network connectivity issues:
+
+**Firewall Detection**:
+- Monitors connection patterns (immediate disconnects, timeouts)
+- Detects WebSocket blocking by firewalls or proxies
+- Tracks consecutive connection failures
+
+**Health Check System**:
+- Pre-connection HTTP health checks to test server availability
+- Separates server downtime from network/firewall issues
+- Available at `/health` endpoint (returns server status)
+
+**Adaptive Retry Strategies**:
+- **Standard Mode**: Exponential backoff (1s → 1.5s → 2.25s → ...)
+- **Aggressive Mode**: Fast initial retries when firewall detected (1s × 3, then exponential)
+- **Failure Tracking**: Stops after 10 consecutive failures to prevent resource waste
+
+**Connection Diagnostics**:
+- Detailed error messages for different failure types
+- Firewall-specific troubleshooting suggestions
+- Network connectivity guidance
 
 ## Troubleshooting
 

@@ -10,6 +10,7 @@ class WebSocketService {
     this.reconnectInterval = 1000;
     this.shouldReconnect = true;
     this.connectionUrl = 'ws://localhost:8080/ws/test-room';
+    this.healthCheckUrl = 'http://localhost:8080/health';
     this.connectionTimeout = 10000;
     this.connectionTimeoutId = null;
     this.connectTime = null;
@@ -19,9 +20,142 @@ class WebSocketService {
     this.lastPongReceived = null; // Track when we last received a pong
     this.missedPongs = 0; // Count missed pongs
     this.maxMissedPongs = 3; // Max missed pongs before considering connection dead
+    
+    // Enhanced retry logic properties
+    this.firewallDetected = false;
+    this.consecutiveFailures = 0;
+    this.lastSuccessfulConnection = null;
+    this.retryStrategy = 'exponential'; // 'exponential' or 'aggressive'
+    this.healthCheckEnabled = true;
+    this.maxConsecutiveFailures = 10;
+    this.aggressiveRetryThreshold = 3;
+    
+    // Circuit breaker pattern
+    this.circuitBreakerState = 'CLOSED'; // CLOSED, OPEN, HALF_OPEN
+    this.circuitBreakerTimeout = 30000; // 30 seconds
+    this.circuitBreakerFailureThreshold = 5;
+    this.circuitBreakerResetTime = null;
+    
+    // Smart firewall detection
+    this.connectionAttempts = [];
+    this.maxConnectionHistory = 10;
   }
 
-  connect(url = this.connectionUrl) {
+  // Circuit breaker logic
+  canAttemptConnection() {
+    const now = Date.now();
+    
+    switch (this.circuitBreakerState) {
+      case 'CLOSED':
+        return true;
+      case 'OPEN':
+        if (now >= this.circuitBreakerResetTime) {
+          this.circuitBreakerState = 'HALF_OPEN';
+          console.log('Circuit breaker moving to HALF_OPEN state');
+          return true;
+        }
+        return false;
+      case 'HALF_OPEN':
+        return true;
+      default:
+        return true;
+    }
+  }
+
+  recordConnectionAttempt(success, duration, errorCode = null) {
+    const attempt = {
+      timestamp: Date.now(),
+      success,
+      duration,
+      errorCode
+    };
+    
+    this.connectionAttempts.push(attempt);
+    if (this.connectionAttempts.length > this.maxConnectionHistory) {
+      this.connectionAttempts.shift();
+    }
+    
+    // Update circuit breaker state
+    if (success) {
+      this.consecutiveFailures = 0;
+      this.circuitBreakerState = 'CLOSED';
+      this.lastSuccessfulConnection = Date.now();
+    } else {
+      this.consecutiveFailures++;
+      
+      if (this.consecutiveFailures >= this.circuitBreakerFailureThreshold && 
+          this.circuitBreakerState === 'CLOSED') {
+        this.circuitBreakerState = 'OPEN';
+        this.circuitBreakerResetTime = Date.now() + this.circuitBreakerTimeout;
+        console.log(`Circuit breaker OPEN - too many failures (${this.consecutiveFailures})`);
+      }
+    }
+  }
+
+  // Smart firewall detection based on connection patterns
+  detectFirewallIssues() {
+    if (this.connectionAttempts.length < 3) return false;
+    
+    const recentAttempts = this.connectionAttempts.slice(-5);
+    const immediateFailures = recentAttempts.filter(attempt => 
+      !attempt.success && attempt.duration < 1000 && 
+      (attempt.errorCode === 1006 || attempt.errorCode === null)
+    ).length;
+    
+    const timeouts = recentAttempts.filter(attempt =>
+      !attempt.success && attempt.duration >= this.connectionTimeout
+    ).length;
+    
+    // Firewall likely if multiple immediate failures or consistent timeouts
+    return immediateFailures >= 3 || timeouts >= 2;
+  }
+
+  // Conditional health check - only when circuit breaker is open or many failures
+  async checkServerHealth() {
+    if (!this.healthCheckEnabled) return true;
+    
+    // Skip health check for normal operations, only use when circuit breaker is open
+    if (this.circuitBreakerState === 'CLOSED' && this.consecutiveFailures < 3) {
+      return true;
+    }
+    
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000); // Shorter timeout
+      
+      const response = await fetch(this.healthCheckUrl, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: { 'Accept': 'application/json' }
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (response.ok) {
+        console.log('Server health check passed');
+        return true;
+      } else {
+        console.warn('Server health check failed:', response.status);
+        return false;
+      }
+    } catch (error) {
+      console.warn('Health check failed:', error.message);
+      return false;
+    }
+  }
+
+  async connect(url = this.connectionUrl) {
+    // Check circuit breaker
+    if (!this.canAttemptConnection()) {
+      console.log('Circuit breaker OPEN - skipping connection attempt');
+      this.notifyConnectionHandlers({
+        type: 'error',
+        error: new Error('Circuit breaker open - too many recent failures'),
+        isCircuitBreakerOpen: true
+      });
+      return;
+    }
+    
     // Prevent multiple concurrent connection attempts
     if (this.isConnecting || this.isConnected) {
       console.log('Already connecting or connected');
@@ -30,6 +164,27 @@ class WebSocketService {
 
     this.connectionUrl = url;
     this.isConnecting = true;
+    
+    // Extract base URL for health check
+    this.healthCheckUrl = url.replace(/^ws/, 'http').replace(/\/ws\/.*$/, '/health');
+    
+    // Conditional health check
+    const healthOk = await this.checkServerHealth();
+    if (!healthOk && this.circuitBreakerState === 'OPEN') {
+      console.log('Health check failed and circuit breaker open');
+      this.isConnecting = false;
+      this.recordConnectionAttempt(false, 0);
+      this.notifyConnectionHandlers({
+        type: 'error',
+        error: new Error('Server health check failed - server may be down'),
+        isHealthCheckFailure: true
+      });
+      
+      if (this.shouldReconnect) {
+        this.handleReconnect();
+      }
+      return;
+    }
     
     // Clear any existing timeout
     if (this.connectionTimeoutId) {
@@ -40,28 +195,41 @@ class WebSocketService {
       console.log(`Attempting to connect to ${url}`);
       this.ws = new WebSocket(url);
       
-      // Add connection start time for debugging
       this.connectTime = Date.now();
       
-      // Set connection timeout
+      // Update firewall detection
+      this.firewallDetected = this.detectFirewallIssues();
+      
+      // Dynamic timeout based on detection
+      const timeoutDuration = this.firewallDetected ? 15000 : this.connectionTimeout;
       this.connectionTimeoutId = setTimeout(() => {
         if (this.isConnecting) {
-          console.log('Connection timeout');
+          const duration = Date.now() - this.connectTime;
+          console.log(`Connection timeout after ${duration}ms`);
+          
           this.isConnecting = false;
+          this.recordConnectionAttempt(false, duration);
+          
           if (this.ws) {
             this.ws.close();
           }
-          this.notifyConnectionHandlers({ 
-            type: 'error', 
-            error: new Error('Connection timeout - server may be unavailable')
+          
+          this.notifyConnectionHandlers({
+            type: 'error',
+            error: new Error('Connection timeout - network or firewall issue'),
+            isFirewallIssue: this.detectFirewallIssues()
           });
         }
-      }, this.connectionTimeout);
+      }, timeoutDuration);
       
       this.ws.onopen = () => {
         const connectionTime = Date.now() - this.connectTime;
         console.log(`WebSocket connected successfully in ${connectionTime}ms`);
         
+        // Record successful connection
+        this.recordConnectionAttempt(true, connectionTime);
+        
+        // Clear any existing timeout
         if (this.connectionTimeoutId) {
           clearTimeout(this.connectionTimeoutId);
           this.connectionTimeoutId = null;
@@ -158,9 +326,15 @@ class WebSocketService {
 
       this.ws.onclose = (event) => {
         const connectionDuration = this.connectTime ? Date.now() - this.connectTime : 0;
-        console.log(`WebSocket disconnected after ${connectionDuration}ms (code: ${event.code}, reason: ${event.reason})`);
-        console.log('wasClean:', event.wasClean);
-        console.log('Connection was established for:', connectionDuration < 1000 ? 'less than 1 second' : `${Math.round(connectionDuration/1000)} seconds`);
+        console.log(`WebSocket disconnected after ${connectionDuration}ms (code: ${event.code})`);
+        
+        // Record failed connection attempt
+        this.recordConnectionAttempt(false, connectionDuration, event.code);
+        
+        // Update firewall detection
+        this.firewallDetected = this.detectFirewallIssues();
+        
+        this.consecutiveFailures++;
         
         // Stop ping mechanism
         this.stopPing();
@@ -193,39 +367,49 @@ class WebSocketService {
           wasImmediateDisconnect
         });
         
-        // Only attempt reconnect if it was an unexpected disconnect and we should reconnect
-        // Don't reconnect on immediate disconnects with code 1000 (likely server issue)
-        if (this.shouldReconnect && !(wasImmediateDisconnect && event.code === 1000)) {
+        // Enhanced reconnection logic with circuit breaker
+        if (this.shouldReconnect && this.canAttemptConnection()) {
+          // Switch to aggressive retry for firewall issues
+          if (this.firewallDetected && this.consecutiveFailures >= this.aggressiveRetryThreshold) {
+            this.retryStrategy = 'aggressive';
+            console.log('Switching to aggressive retry for detected firewall issues');
+          }
+          
           this.handleReconnect();
-        } else if (wasImmediateDisconnect && event.code === 1000) {
-          console.log('Not attempting reconnect due to immediate server disconnect');
+        } else if (this.circuitBreakerState === 'OPEN') {
+          console.log('Circuit breaker open - delaying reconnection');
+          this.notifyConnectionHandlers({
+            type: 'reconnect_delayed',
+            reason: 'circuit_breaker_open',
+            retryAfter: Math.round((this.circuitBreakerResetTime - Date.now()) / 1000)
+          });
         }
       };
 
       this.ws.onerror = (error) => {
         const connectionTime = this.connectTime ? Date.now() - this.connectTime : 0;
         console.error(`WebSocket error after ${connectionTime}ms:`, error);
-        console.log('WebSocket readyState at error:', this.ws?.readyState);
         
-        if (this.connectionTimeoutId) {
-          clearTimeout(this.connectionTimeoutId);
-          this.connectionTimeoutId = null;
-        }
-        this.isConnecting = false;
+        // Record error
+        this.recordConnectionAttempt(false, connectionTime);
         
-        // Provide more helpful error message
-        const errorMessage = this.isConnected ? 
-          'Connection error occurred' : 
-          'Failed to connect - check if server is running and URL is correct';
-          
-        this.notifyConnectionHandlers({ 
-          type: 'error', 
-          error: new Error(errorMessage)
+        // Enhanced error detection
+        const isFirewallIssue = this.detectFirewallIssues();
+        const errorMessage = isFirewallIssue ?
+          'Connection blocked - firewall or network filtering detected' :
+          (this.isConnected ? 'Connection error occurred' : 'Failed to connect - check server status');
+        
+        this.notifyConnectionHandlers({
+          type: 'error',
+          error: new Error(errorMessage),
+          isFirewallIssue
         });
       };
 
     } catch (error) {
       console.error('Failed to create WebSocket connection:', error);
+      this.recordConnectionAttempt(false, 0);
+      this.consecutiveFailures++;
       this.isConnecting = false;
       if (this.connectionTimeoutId) {
         clearTimeout(this.connectionTimeoutId);
@@ -322,7 +506,6 @@ class WebSocketService {
   }
 
   handleReconnect() {
-    // Don't reconnect if explicitly disconnected or max attempts reached
     if (!this.shouldReconnect || this.reconnectAttempts >= this.maxReconnectAttempts) {
       if (this.reconnectAttempts >= this.maxReconnectAttempts) {
         console.log('Max reconnection attempts reached. Stopping reconnection.');
@@ -334,19 +517,44 @@ class WebSocketService {
       return;
     }
 
+    // Check circuit breaker before scheduling reconnect
+    if (!this.canAttemptConnection()) {
+      const delayUntilReset = Math.max(0, this.circuitBreakerResetTime - Date.now());
+      console.log(`Circuit breaker open - delaying reconnect by ${Math.round(delayUntilReset/1000)}s`);
+      
+      setTimeout(() => {
+        if (this.shouldReconnect) {
+          this.handleReconnect();
+        }
+      }, delayUntilReset + 1000); // Add 1s buffer
+      return;
+    }
+
     this.reconnectAttempts++;
-    console.log(`Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+    console.log(`Reconnecting... (${this.reconnectAttempts}/${this.maxReconnectAttempts}) [${this.retryStrategy}] [CB: ${this.circuitBreakerState}]`);
     
     this.notifyConnectionHandlers({ 
       type: 'reconnecting', 
       attempt: this.reconnectAttempts,
-      maxAttempts: this.maxReconnectAttempts
+      maxAttempts: this.maxReconnectAttempts,
+      strategy: this.retryStrategy,
+      firewallDetected: this.firewallDetected
     });
     
-    // Exponential backoff: increase delay with each attempt
-    const delay = this.reconnectInterval * Math.pow(1.5, this.reconnectAttempts - 1);
-    const maxDelay = 30000; // Cap at 30 seconds
-    const actualDelay = Math.min(delay, maxDelay);
+    let delay;
+    if (this.retryStrategy === 'aggressive' || this.firewallDetected) {
+      // Aggressive: 1s, 1s, 1s, then exponential
+      if (this.reconnectAttempts <= 3) {
+        delay = 1000;
+      } else {
+        delay = Math.min(3000 * Math.pow(1.3, this.reconnectAttempts - 3), 20000);
+      }
+    } else {
+      // Standard exponential backoff
+      delay = this.reconnectInterval * Math.pow(1.5, this.reconnectAttempts - 1);
+    }
+    
+    const actualDelay = Math.min(delay, 30000);
     
     setTimeout(() => {
       if (this.shouldReconnect && this.reconnectAttempts <= this.maxReconnectAttempts) {
@@ -395,10 +603,32 @@ class WebSocketService {
     return this.isConnected;
   }
 
-  // Reset reconnection state for manual reconnection
+  // Reset connection state for manual reconnection
   resetReconnection() {
     this.reconnectAttempts = 0;
+    this.consecutiveFailures = 0;
+    this.firewallDetected = false;
+    this.retryStrategy = 'exponential';
     this.shouldReconnect = true;
+    this.circuitBreakerState = 'CLOSED';
+    this.connectionAttempts = [];
+  }
+
+  // Get diagnostic information
+  getConnectionDiagnostics() {
+    return {
+      isConnected: this.isConnected,
+      isConnecting: this.isConnecting,
+      reconnectAttempts: this.reconnectAttempts,
+      consecutiveFailures: this.consecutiveFailures,
+      firewallDetected: this.firewallDetected,
+      retryStrategy: this.retryStrategy,
+      circuitBreakerState: this.circuitBreakerState,
+      lastSuccessfulConnection: this.lastSuccessfulConnection,
+      connectionUrl: this.connectionUrl,
+      healthCheckUrl: this.healthCheckUrl,
+      recentAttempts: this.connectionAttempts.slice(-5)
+    };
   }
 
   // Enhanced ping mechanism with pong tracking

@@ -1,12 +1,14 @@
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::io::{self, Write};
-
 use std::path::PathBuf;
+use std::time::Duration;
 use axum::{
     extract::Json as ExtractJson,
     Json,
 };
 use serde::{Deserialize, Serialize};
+use tokio::time::timeout;
+use wait_timeout::ChildExt;
 
 #[derive(Deserialize)]
 struct Input{
@@ -32,9 +34,9 @@ impl CD{
     }
 
 	pub async fn cd(&mut self,ExtractJson(payload): ExtractJson<Input>) -> Json<Output> {
-
 		let sentence = payload.input;
 
+		// Handle cd command
 		if sentence.starts_with("cd ") {
 			let new_path = self.curr_dir.join(sentence[3..].trim());
 			match new_path.canonicalize() {
@@ -50,20 +52,82 @@ impl CD{
 					return Json(Output {
 						stdout: "".to_string(),
 						stderr: format!("cd failed: {}", e),
-						status: 1, // non-zero means error
+						status: 1,
 					});
 				}
 			}
 		}
 
-		let temp = Command::new("bash").current_dir(self.curr_dir.clone()).arg("-c").arg(sentence).output().expect("Failed");
+		// Execute command with timeout
+		let cmd_future = async {
+			let mut child = if cfg!(target_os = "windows") {
+				Command::new("cmd")
+					.current_dir(self.curr_dir.clone())
+					.args(["/C", &sentence])
+					.stdout(Stdio::piped())
+					.stderr(Stdio::piped())
+					.spawn()
+			} else {
+				Command::new("bash")
+					.current_dir(self.curr_dir.clone())
+					.arg("-c")
+					.arg(&sentence)
+					.stdout(Stdio::piped())
+					.stderr(Stdio::piped())
+					.spawn()
+			};
 
-		let mut output = Output{
-			stdout: String::from_utf8_lossy(&temp.stdout).trim().to_string(),
-			stderr: String::from_utf8_lossy(&temp.stderr).trim().to_string(),
-			status: temp.status.code().unwrap_or(1),
+			match child {
+				Ok(mut process) => {
+					let timeout_duration = Duration::from_secs(10); // 10 second timeout
+					match process.wait_timeout(timeout_duration) {
+						Ok(Some(status)) => {
+							// Process completed within timeout
+							let output = process.wait_with_output().unwrap();
+							Output {
+								stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+								stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+								status: status.code().unwrap_or(-1),
+							}
+						}
+						Ok(None) => {
+							// Process timed out
+							let _ = process.kill();
+							let _ = process.wait();
+							Output {
+								stdout: "".to_string(),
+								stderr: format!("Command timed out after {} seconds", timeout_duration.as_secs()),
+								status: -1,
+							}
+						}
+						Err(e) => {
+							Output {
+								stdout: "".to_string(),
+								stderr: format!("Error waiting for process: {}", e),
+								status: -1,
+							}
+						}
+					}
+				}
+				Err(e) => {
+					Output {
+						stdout: "".to_string(),
+						stderr: format!("Failed to execute command: {}", e),
+						status: -1,
+					}
+				}
+			}
 		};
-        Json(output)
+
+		// Apply async timeout as additional safety
+		match timeout(Duration::from_secs(15), cmd_future).await {
+			Ok(output) => Json(output),
+			Err(_) => Json(Output {
+				stdout: "".to_string(),
+				stderr: "Command execution timed out".to_string(),
+				status: -1,
+			})
+		}
     }
 }
 
