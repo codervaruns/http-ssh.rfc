@@ -69,6 +69,13 @@ function App() {
           timestamp: new Date().toLocaleTimeString()
         };
         
+        console.log('Command output received:', {
+          command: newOutput.command,
+          stdoutLength: newOutput.stdout.length,
+          stderrLength: newOutput.stderr.length,
+          exitCode: newOutput.exitCode
+        });
+        
         setOutput(prev => [...prev, newOutput]);
         setLastCommandOutput(newOutput);
         
@@ -80,7 +87,6 @@ function App() {
         );
         
         if (autoCompleteResult && autoCompleteResult.type === 'directory_listing') {
-          // The AutoCompleteService has already cached the directory contents
           console.log('Directory contents cached for path:', autoCompleteResult.path);
         }
       } else if (message.type === 'stdout' || message.type === 'stderr') {
@@ -96,6 +102,15 @@ function App() {
         };
         
         setOutput(prev => [...prev, streamOutput]);
+        // Also update lastCommandOutput for streaming data
+        setLastCommandOutput(prev => {
+          if (!prev) return streamOutput;
+          return {
+            ...prev,
+            stdout: prev.stdout + streamOutput.stdout,
+            stderr: prev.stderr + streamOutput.stderr
+          };
+        });
       } else if (message.type === 'command_start') {
         // Handle command start notification
         const commandStart = {
