@@ -43,17 +43,26 @@ impl Lobby {
     fn execute_command(&mut self, command: &str, id_to: &Uuid) {
         // Handle `cd` separately
         if command.starts_with("cd ") {
-            let new_path = self.curr_dir.join(command[3..].trim());
+            let target_path = command[3..].trim();
+            let new_path = if target_path.is_empty() {
+                // cd with no arguments goes to home directory
+                std::env::var("HOME").unwrap_or_else(|_| "/".to_string()).into()
+            } else {
+                self.curr_dir.join(target_path)
+            };
+            
             match new_path.canonicalize() {
                 Ok(resolved) => {
                     self.curr_dir = resolved;
+                    let current_path = self.curr_dir.to_string_lossy();
                     let response = serde_json::json!({
                         "type": "command_output",
                         "payload": {
                             "command": command,
-                            "stdout": "",
+                            "stdout": format!("Changed directory to: {}", current_path),
                             "stderr": "",
-                            "exitCode": 0
+                            "exitCode": 0,
+                            "currentDirectory": current_path
                         }
                     });
                     self.send_message(&response.to_string(), id_to);
@@ -64,8 +73,9 @@ impl Lobby {
                         "payload": {
                             "command": command,
                             "stdout": "",
-                            "stderr": format!("cd failed: {}", e),
-                            "exitCode": 1
+                            "stderr": format!("cd: {}: {}", target_path, e),
+                            "exitCode": 1,
+                            "currentDirectory": self.curr_dir.to_string_lossy()
                         }
                     });
                     self.send_message(&response.to_string(), id_to);
@@ -73,6 +83,9 @@ impl Lobby {
             }
             return;
         }
+
+        // For ls commands, add current directory to response
+        let is_ls_command = command.trim().starts_with("ls") || command.trim().starts_with("dir");
 
         // Spawn process (non-blocking)
         let child = if cfg!(target_os = "windows") {
@@ -94,24 +107,31 @@ impl Lobby {
 
         match child {
             Ok(mut process) => {
-                let timeout = Duration::from_secs(15); // ⏱️ adjust as needed
+                let timeout = Duration::from_secs(15);
                 match process.wait_timeout(timeout).unwrap() {
                     Some(status) => {
-                        // Completed in time
                         let output = process.wait_with_output().unwrap();
                         let stdout = String::from_utf8_lossy(&output.stdout);
                         let stderr = String::from_utf8_lossy(&output.stderr);
                         let exit_code = status.code().unwrap_or(-1);
 
+                        let mut response_payload = serde_json::json!({
+                            "command": command,
+                            "stdout": stdout.trim(),
+                            "stderr": stderr.trim(),
+                            "exitCode": exit_code
+                        });
+
+                        // Add current directory for ls commands
+                        if is_ls_command {
+                            response_payload["currentDirectory"] = serde_json::Value::String(self.curr_dir.to_string_lossy().to_string());
+                        }
+
                         let response = serde_json::json!({
                             "type": "command_output",
-                            "payload": {
-                                "command": command,
-                                "stdout": stdout.trim(),
-                                "stderr": stderr.trim(),
-                                "exitCode": exit_code
-                            }
+                            "payload": response_payload
                         });
+                        
                         self.send_message(&response.to_string(), id_to);
                     }
                     None => {
@@ -125,7 +145,8 @@ impl Lobby {
                                 "command": command,
                                 "stdout": "",
                                 "stderr": format!("Process timed out after {:?}s", timeout.as_secs()),
-                                "exitCode": -1
+                                "exitCode": -1,
+                                "currentDirectory": self.curr_dir.to_string_lossy()
                             }
                         });
                         self.send_message(&response.to_string(), id_to);
@@ -139,7 +160,8 @@ impl Lobby {
                         "command": command,
                         "stdout": "",
                         "stderr": format!("Failed to execute command: {}", e),
-                        "exitCode": -1
+                        "exitCode": -1,
+                        "currentDirectory": self.curr_dir.to_string_lossy()
                     }
                 });
                 self.send_message(&error_response.to_string(), id_to);

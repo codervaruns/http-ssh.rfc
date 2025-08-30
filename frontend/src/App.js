@@ -229,31 +229,33 @@ function App() {
   }, [currentDirectory]);
 
   // Update directory contents in AutoCompleteService when file explorer loads directory
-  const handleDirectoryContentsLoaded = (path, contents) => {
+  const handleDirectoryContentsLoaded = useCallback((path, contents) => {
     AutoCompleteService.cacheDirectoryContents(path, contents);
-  };
+  }, []);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    
-    if (!command.trim()) return;
-    
+  const handleDirectoryChange = useCallback((newPath) => {
+    setCurrentDirectory(newPath);
+    AutoCompleteService.setCurrentDirectory(newPath);
+  }, []);
+
+  // Send command to server
+  const sendCommand = (cmd) => {
     if (isConnected) {
       // Add command to AutoCompleteService history
-      AutoCompleteService.addToHistory(command.trim());
+      AutoCompleteService.addToHistory(cmd.trim());
       
       // Send command via WebSocket
-      const success = WebSocketService.sendCommand(command.trim());
+      const success = WebSocketService.sendCommand(cmd.trim());
       
       if (success) {
         // Add command to history
-        setCommandHistory(prev => [...prev, command.trim()]);
+        setCommandHistory(prev => [...prev, cmd.trim()]);
         setHistoryIndex(-1);
         
         // Add command echo to output
         const commandEcho = {
           id: generateId(),
-          command: command.trim(),
+          command: cmd.trim(),
           stdout: '',
           stderr: '',
           exitCode: 0,
@@ -267,6 +269,14 @@ function App() {
     } else {
       addSystemMessage('Not connected to server');
     }
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    
+    if (!command.trim()) return;
+    
+    sendCommand(command);
     
     setCommand('');
     setAutoCompleteVisible(false);
@@ -419,11 +429,6 @@ function App() {
 
   const clearOutput = () => {
     setOutput([]);
-  };
-
-  const handleDirectoryChange = (newPath) => {
-    setCurrentDirectory(newPath);
-    AutoCompleteService.setCurrentDirectory(newPath);
   };
 
   const toggleFileExplorer = () => {

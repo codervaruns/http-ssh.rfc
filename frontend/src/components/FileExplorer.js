@@ -17,20 +17,38 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
     if (commandOutput && commandOutput.command && commandOutput.stdout) {
       const command = commandOutput.command.trim();
       
+      // Update current directory if server provides it
+      if (commandOutput.currentDirectory && commandOutput.currentDirectory !== currentPath) {
+        console.log('Updating path from server:', commandOutput.currentDirectory);
+        setCurrentPath(commandOutput.currentDirectory);
+        onDirectoryChange(commandOutput.currentDirectory);
+      }
+      
       // Check if this is a directory listing command we sent
       if (command === lastListCommand || 
           command.match(/^(?:ls|dir)\s+(?:-[la]+\s+)?/)) {
         
         try {
-          const items = parseDirectoryOutput(commandOutput.stdout, currentPath);
+          const targetPath = commandOutput.currentDirectory || currentPath;
+          const items = parseDirectoryOutput(commandOutput.stdout, targetPath);
+          
           if (items.length > 0 || commandOutput.stdout.includes('total ')) {
             setDirectoryItems(items);
             setError('');
             
             // Notify parent about directory contents for auto-completion
             if (onDirectoryContentsLoaded) {
-              onDirectoryContentsLoaded(currentPath, items);
+              onDirectoryContentsLoaded(targetPath, items);
             }
+          } else if (commandOutput.stderr && commandOutput.stderr.includes('Permission denied')) {
+            setError('Permission denied');
+            setDirectoryItems([]);
+          } else if (commandOutput.stderr && commandOutput.stderr.includes('No such file')) {
+            setError('Directory not found');
+            setDirectoryItems([]);
+          } else {
+            setError('Directory is empty or could not be read');
+            setDirectoryItems([]);
           }
         } catch (err) {
           console.error('Error parsing directory output:', err);
@@ -48,15 +66,23 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
         }
       }
     }
-  }, [commandOutput, lastListCommand, currentPath, onDirectoryContentsLoaded]);
+  }, [commandOutput, lastListCommand, currentPath, onDirectoryChange, onDirectoryContentsLoaded]);
 
   const loadDirectory = useCallback((path) => {
-    if (!isConnected || pendingRequestRef.current) {
-      console.log('LoadDirectory blocked:', { isConnected, pending: pendingRequestRef.current });
+    if (!isConnected) {
+      console.log('LoadDirectory blocked: not connected');
       return;
     }
     
-    console.log('Loading directory:', path);
+    if (pendingRequestRef.current) {
+      console.log('LoadDirectory blocked: request already pending');
+      return;
+    }
+    
+    // Normalize the path
+    const normalizedPath = path.replace(/\/+/g, '/');
+    
+    console.log('Loading directory:', normalizedPath);
     setLoading(true);
     setError('');
     pendingRequestRef.current = true;
@@ -67,8 +93,8 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
       timeoutRef.current = null;
     }
     
-    // Determine the appropriate command based on the platform
-    const listCommand = `ls -la "${path}"`;
+    // Use ls -la for detailed listing
+    const listCommand = `ls -la "${normalizedPath}"`;
     setLastListCommand(listCommand);
     
     console.log('Sending command:', listCommand);
@@ -85,10 +111,11 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
     
     // Set timeout to stop loading if no response
     timeoutRef.current = setTimeout(() => {
-      console.log('Directory listing timeout for:', path);
+      console.log('Directory listing timeout for:', normalizedPath);
       setLoading(false);
       pendingRequestRef.current = false;
       setError('No response from server - timeout after 5 seconds');
+      setLastListCommand('');
       timeoutRef.current = null;
     }, 5000);
   }, [isConnected, onSendCommand]);
@@ -194,37 +221,70 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
     console.log('Item clicked:', item);
     
     if (item.isDirectory) {
-      const newPath = item.name === '..' 
-        ? (currentPath === '/' ? '/' : currentPath.split('/').slice(0, -1).join('/') || '/')
-        : `${currentPath}/${item.name}`.replace(/\/+/g, '/');
+      let newPath;
       
-      console.log('Navigating to:', newPath);
-      setCurrentPath(newPath);
-      onDirectoryChange(newPath);
+      if (item.name === '..') {
+        // Go to parent directory
+        if (currentPath === '/' || currentPath === '') {
+          newPath = '/';
+        } else {
+          const pathParts = currentPath.split('/').filter(Boolean);
+          pathParts.pop();
+          newPath = '/' + pathParts.join('/');
+        }
+      } else {
+        // Go to subdirectory
+        newPath = currentPath === '/' ? 
+          `/${item.name}` : 
+          `${currentPath}/${item.name}`;
+      }
       
-      // Send cd command and then list the new directory
+      // Normalize path
+      newPath = newPath.replace(/\/+/g, '/');
+      
+      console.log('Navigating from', currentPath, 'to:', newPath);
+      
+      // First send cd command, then load directory after a delay
       onSendCommand(`cd "${newPath}"`);
-      setTimeout(() => loadDirectory(newPath), 200);
+      
+      // Small delay to let cd command complete
+      setTimeout(() => {
+        if (!pendingRequestRef.current) {
+          loadDirectory(newPath);
+        }
+      }, 100);
     } else {
       // For files, show file info
-      const filePath = `${currentPath}/${item.name}`.replace(/\/+/g, '/');
+      const filePath = currentPath === '/' ? 
+        `/${item.name}` : 
+        `${currentPath}/${item.name}`;
+      
       console.log('Showing file info for:', filePath);
       onSendCommand(`file "${filePath}" 2>/dev/null || echo "File: ${filePath}"`);
     }
   };
 
   const navigateUp = () => {
-    if (currentPath === '/') return;
+    if (currentPath === '/' || currentPath === '') return;
     
-    const parentPath = currentPath.split('/').slice(0, -1).join('/') || '/';
-    setCurrentPath(parentPath);
-    onDirectoryChange(parentPath);
-    onSendCommand(`cd "${parentPath}"`);
-    setTimeout(() => loadDirectory(parentPath), 100);
+    const pathParts = currentPath.split('/').filter(Boolean);
+    pathParts.pop();
+    const parentPath = '/' + pathParts.join('/');
+    const normalizedPath = parentPath.replace(/\/+/g, '/');
+    
+    console.log('Navigating up from', currentPath, 'to:', normalizedPath);
+    
+    onSendCommand(`cd "${normalizedPath}"`);
+    setTimeout(() => {
+      if (!pendingRequestRef.current) {
+        loadDirectory(normalizedPath);
+      }
+    }, 100);
   };
 
   const refreshCurrent = () => {
-    if (!pendingRequestRef.current) {
+    if (!pendingRequestRef.current && currentPath) {
+      console.log('Refreshing current directory:', currentPath);
       loadDirectory(currentPath);
     }
   };
