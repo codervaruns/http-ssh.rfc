@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import WebSocketService from './services/WebSocketService';
+import FileExplorer from './components/FileExplorer';
 import './App.css';
 
 function App() {
@@ -19,6 +20,8 @@ function App() {
   const [connectionUrl, setConnectionUrl] = useState(`ws://localhost:8080/ws/${generateUUID()}`); // Added room ID
   const [commandHistory, setCommandHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [currentDirectory, setCurrentDirectory] = useState('/');
+  const [showFileExplorer, setShowFileExplorer] = useState(true);
   const inputRef = useRef(null);
   const outputRef = useRef(null);
   const idCounterRef = useRef(0); // Use ref to persist across renders
@@ -253,11 +256,26 @@ function App() {
     setOutput([]);
   };
 
+  const handleDirectoryChange = (newPath) => {
+    setCurrentDirectory(newPath);
+  };
+
+  const toggleFileExplorer = () => {
+    setShowFileExplorer(!showFileExplorer);
+  };
+
   return (
     <div className="terminal">
       <div className="terminal-header">
         <div className="terminal-title">HTTP-SSH Terminal</div>
         <div className="terminal-controls">
+          <button 
+            onClick={toggleFileExplorer}
+            className="control-button"
+            title={showFileExplorer ? 'Hide file explorer' : 'Show file explorer'}
+          >
+            {showFileExplorer ? '◀' : '▶'} Files
+          </button>
           <input
             type="text"
             value={connectionUrl}
@@ -287,43 +305,61 @@ function App() {
         </div>
       </div>
 
-      <div className="terminal-output" ref={outputRef}>
-        {output.map((item) => (
-          <div key={item.id} className="output-item">
-            {item.isCommand && (
-              <div className="command-line">
-                <span className="prompt">$ </span>
-                <span className="command">{item.command}</span>
-                <span className="timestamp">[{item.timestamp}]</span>
+      <div className="terminal-body">
+        {showFileExplorer && (
+          <FileExplorer 
+            isConnected={isConnected}
+            onSendCommand={(command) => {
+              if (isConnected) {
+                return WebSocketService.sendCommand(command);
+              }
+              return false;
+            }}
+            onDirectoryChange={handleDirectoryChange}
+          />
+        )}
+        
+        <div className="terminal-main">
+          <div className="terminal-output" ref={outputRef}>
+            {output.map((item) => (
+              <div key={item.id} className="output-item">
+                {item.isCommand && (
+                  <div className="command-line">
+                    <span className="prompt">$ </span>
+                    <span className="command">{item.command}</span>
+                    <span className="timestamp">[{item.timestamp}]</span>
+                  </div>
+                )}
+                {item.stdout && (
+                  <div className={`stdout ${item.isSystem ? 'system' : ''}`}>
+                    {item.stdout}
+                  </div>
+                )}
+                {item.stderr && (
+                  <div className="stderr">
+                    {item.stderr}
+                  </div>
+                )}
               </div>
-            )}
-            {item.stdout && (
-              <div className={`stdout ${item.isSystem ? 'system' : ''}`}>
-                {item.stdout}
-              </div>
-            )}
-            {item.stderr && (
-              <div className="stderr">
-                {item.stderr}
-              </div>
-            )}
+            ))}
           </div>
-        ))}
-      </div>
 
-      <form onSubmit={handleSubmit} className="terminal-input">
-        <span className="prompt">$ </span>
-        <input
-          ref={inputRef}
-          type="text"
-          value={command}
-          onChange={(e) => setCommand(e.target.value)}
-          onKeyDown={handleKeyDown}
-          className="command-input"
-          placeholder="Enter command..."
-          autoFocus
-        />
-      </form>
+          <form onSubmit={handleSubmit} className="terminal-input">
+            <span className="prompt">$ </span>
+            <span className="current-dir">{currentDirectory}</span>
+            <input
+              ref={inputRef}
+              type="text"
+              value={command}
+              onChange={(e) => setCommand(e.target.value)}
+              onKeyDown={handleKeyDown}
+              className="command-input"
+              placeholder="Enter command..."
+              autoFocus
+            />
+          </form>
+        </div>
+      </div>
     </div>
   );
 }

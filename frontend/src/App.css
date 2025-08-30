@@ -28,6 +28,18 @@
   gap: 10px;
 }
 
+.terminal-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.terminal-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
 .url-input {
   padding: 4px 8px;
   border: 1px solid #555;
@@ -120,6 +132,12 @@
   font-weight: bold;
 }
 
+.current-dir {
+  color: #87ceeb;
+  margin-right: 5px;
+  font-size: 12px;
+}
+
 .command {
   color: #ffffff;
 }
@@ -188,4 +206,20 @@
 
 .terminal-output::-webkit-scrollbar-thumb:hover {
   background: #777;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .terminal-body {
+    flex-direction: column;
+  }
+  
+  .terminal-controls {
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  
+  .url-input {
+    width: 150px;
+  }
 }
