@@ -66,18 +66,27 @@ function App() {
           stdout: message.payload.stdout || '',
           stderr: message.payload.stderr || '',
           exitCode: message.payload.exitCode || 0,
-          timestamp: new Date().toLocaleTimeString()
+          timestamp: new Date().toLocaleTimeString(),
+          currentDirectory: message.payload.currentDirectory
         };
         
         console.log('Command output received:', {
           command: newOutput.command,
           stdoutLength: newOutput.stdout.length,
           stderrLength: newOutput.stderr.length,
-          exitCode: newOutput.exitCode
+          exitCode: newOutput.exitCode,
+          currentDirectory: newOutput.currentDirectory
         });
         
         setOutput(prev => [...prev, newOutput]);
         setLastCommandOutput(newOutput);
+        
+        // Update current directory if provided
+        if (newOutput.currentDirectory && newOutput.currentDirectory !== currentDirectory) {
+          console.log('Updating current directory from command output:', newOutput.currentDirectory);
+          setCurrentDirectory(newOutput.currentDirectory);
+          AutoCompleteService.setCurrentDirectory(newOutput.currentDirectory);
+        }
         
         // Handle directory listing for auto-completion
         const autoCompleteResult = AutoCompleteService.handleCommandOutput(
@@ -88,6 +97,26 @@ function App() {
         
         if (autoCompleteResult && autoCompleteResult.type === 'directory_listing') {
           console.log('Directory contents cached for path:', autoCompleteResult.path);
+        }
+      } else if (message.type === 'system_message') {
+        // Handle system messages and extract current directory if provided
+        const systemOutput = {
+          id: generateId(),
+          command: '',
+          stdout: message.payload?.message || message.message || '',
+          stderr: '',
+          exitCode: 0,
+          timestamp: new Date().toLocaleTimeString(),
+          isSystem: true
+        };
+        
+        setOutput(prev => [...prev, systemOutput]);
+        
+        // Update current directory from system message if provided
+        if (message.payload?.currentDirectory) {
+          console.log('Updating current directory from system message:', message.payload.currentDirectory);
+          setCurrentDirectory(message.payload.currentDirectory);
+          AutoCompleteService.setCurrentDirectory(message.payload.currentDirectory);
         }
       } else if (message.type === 'stdout' || message.type === 'stderr') {
         // Handle streaming output chunks

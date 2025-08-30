@@ -47,7 +47,17 @@ impl Lobby {
             let new_path = if target_path.is_empty() {
                 // cd with no arguments goes to home directory
                 std::env::var("HOME").unwrap_or_else(|_| "/".to_string()).into()
+            } else if target_path == "." {
+                // cd . stays in current directory
+                self.curr_dir.clone()
+            } else if target_path == ".." {
+                // cd .. goes to parent directory
+                self.curr_dir.parent().unwrap_or(&self.curr_dir).to_path_buf()
+            } else if target_path.starts_with('/') {
+                // Absolute path
+                PathBuf::from(target_path)
             } else {
+                // Relative path
                 self.curr_dir.join(target_path)
             };
             
@@ -59,7 +69,7 @@ impl Lobby {
                         "type": "command_output",
                         "payload": {
                             "command": command,
-                            "stdout": format!("Changed directory to: {}", current_path),
+                            "stdout": "",
                             "stderr": "",
                             "exitCode": 0,
                             "currentDirectory": current_path
@@ -73,7 +83,7 @@ impl Lobby {
                         "payload": {
                             "command": command,
                             "stdout": "",
-                            "stderr": format!("cd: {}: {}", target_path, e),
+                            "stderr": format!("cd: \"{}\": {}", target_path, e),
                             "exitCode": 1,
                             "currentDirectory": self.curr_dir.to_string_lossy()
                         }
@@ -84,8 +94,8 @@ impl Lobby {
             return;
         }
 
-        // For ls commands, add current directory to response
-        let is_ls_command = command.trim().starts_with("ls") || command.trim().starts_with("dir");
+        // Always include current directory in response
+        let current_dir_str = self.curr_dir.to_string_lossy().to_string();
 
         // Spawn process (non-blocking)
         let child = if cfg!(target_os = "windows") {
@@ -115,21 +125,15 @@ impl Lobby {
                         let stderr = String::from_utf8_lossy(&output.stderr);
                         let exit_code = status.code().unwrap_or(-1);
 
-                        let mut response_payload = serde_json::json!({
-                            "command": command,
-                            "stdout": stdout.trim(),
-                            "stderr": stderr.trim(),
-                            "exitCode": exit_code
-                        });
-
-                        // Add current directory for ls commands
-                        if is_ls_command {
-                            response_payload["currentDirectory"] = serde_json::Value::String(self.curr_dir.to_string_lossy().to_string());
-                        }
-
                         let response = serde_json::json!({
                             "type": "command_output",
-                            "payload": response_payload
+                            "payload": {
+                                "command": command,
+                                "stdout": stdout.trim(),
+                                "stderr": stderr.trim(),
+                                "exitCode": exit_code,
+                                "currentDirectory": current_dir_str
+                            }
                         });
                         
                         self.send_message(&response.to_string(), id_to);
@@ -146,7 +150,7 @@ impl Lobby {
                                 "stdout": "",
                                 "stderr": format!("Process timed out after {:?}s", timeout.as_secs()),
                                 "exitCode": -1,
-                                "currentDirectory": self.curr_dir.to_string_lossy()
+                                "currentDirectory": current_dir_str
                             }
                         });
                         self.send_message(&response.to_string(), id_to);
@@ -161,7 +165,7 @@ impl Lobby {
                         "stdout": "",
                         "stderr": format!("Failed to execute command: {}", e),
                         "exitCode": -1,
-                        "currentDirectory": self.curr_dir.to_string_lossy()
+                        "currentDirectory": current_dir_str
                     }
                 });
                 self.send_message(&error_response.to_string(), id_to);
@@ -273,12 +277,13 @@ impl Handler<Connect> for Lobby {
 
         self.sessions.insert(msg.self_id, msg.addr);
 
-        // Send JSON formatted welcome message
+        // Send JSON formatted welcome message with current directory
         let welcome_message = serde_json::json!({
             "type": "system_message",
             "payload": {
                 "message": format!("Connected! Your session ID is {}", msg.self_id),
-                "timestamp": chrono::Utc::now().to_rfc3339()
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "currentDirectory": self.curr_dir.to_string_lossy()
             }
         });
         
@@ -331,6 +336,11 @@ impl Handler<ClientActorMessage> for Lobby {
             if let Some(room_users) = self.rooms.get(&msg.room_id) {
                 for client in room_users {
                     self.send_message(&msg.msg, client);
+                }
+            }
+        }
+    }
+}
                 }
             }
         }

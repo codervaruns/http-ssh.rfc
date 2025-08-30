@@ -79,8 +79,14 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
       return;
     }
     
+    // Handle current directory shortcut
+    let actualPath = path;
+    if (path === '.') {
+      actualPath = currentPath;
+    }
+    
     // Normalize the path
-    const normalizedPath = path.replace(/\/+/g, '/');
+    const normalizedPath = actualPath.replace(/\/+/g, '/');
     
     // Prevent duplicate requests for the same path
     if (lastListCommand === `ls -la "${normalizedPath}"`) {
@@ -124,20 +130,13 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
       setLastListCommand('');
       timeoutRef.current = null;
     }, 5000);
-  }, [isConnected, onSendCommand, lastListCommand]);
+  }, [isConnected, onSendCommand, lastListCommand, currentPath]);
 
   const initialLoadRef = useRef(false);
   
   useEffect(() => {
     console.log('Connection status changed:', isConnected);
-    if (isConnected && !initialLoadRef.current) {
-      initialLoadRef.current = true;
-      // Small delay to ensure connection is fully established
-      setTimeout(() => {
-        console.log('Loading initial directory');
-        loadDirectory('/');
-      }, 500);
-    } else if (!isConnected) {
+    if (!isConnected) {
       initialLoadRef.current = false;
       setDirectoryItems([]);
       setError('');
@@ -147,6 +146,7 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
         timeoutRef.current = null;
       }
     }
+    // Removed automatic directory loading - wait for server to provide current directory
   }, [isConnected, loadDirectory]);
 
   // Cleanup timeout on unmount
@@ -231,43 +231,31 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
     console.log('Item clicked:', item);
     
     if (item.isDirectory) {
-      let newPath;
+      let targetPath;
       
       if (item.name === '..') {
         // Go to parent directory
-        if (currentPath === '/' || currentPath === '') {
-          newPath = '/';
-        } else {
-          const pathParts = currentPath.split('/').filter(Boolean);
-          pathParts.pop();
-          newPath = '/' + pathParts.join('/');
-        }
+        targetPath = '..';
       } else {
-        // Go to subdirectory
-        newPath = currentPath === '/' ? 
-          `/${item.name}` : 
-          `${currentPath}/${item.name}`;
+        // Go to subdirectory - use relative path
+        targetPath = item.name;
       }
       
-      // Normalize path
-      newPath = newPath.replace(/\/+/g, '/');
+      console.log('Navigating to relative path:', targetPath);
       
-      console.log('Navigating from', currentPath, 'to:', newPath);
-      
-      // First send cd command, then load directory after a delay
-      onSendCommand(`cd "${newPath}"`);
+      // Send cd command with relative path
+      onSendCommand(`cd ${targetPath}`);
       
       // Small delay to let cd command complete
       setTimeout(() => {
         if (!pendingRequestRef.current) {
-          loadDirectory(newPath);
+          // Load current directory after cd
+          loadDirectory('.');
         }
       }, 100);
     } else {
-      // For files, show file info
-      const filePath = currentPath === '/' ? 
-        `/${item.name}` : 
-        `${currentPath}/${item.name}`;
+      // For files, show file info using relative path
+      const filePath = item.name;
       
       console.log('Showing file info for:', filePath);
       onSendCommand(`file "${filePath}" 2>/dev/null || echo "File: ${filePath}"`);
@@ -277,27 +265,35 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirecto
   const navigateUp = () => {
     if (currentPath === '/' || currentPath === '') return;
     
-    const pathParts = currentPath.split('/').filter(Boolean);
-    pathParts.pop();
-    const parentPath = '/' + pathParts.join('/');
-    const normalizedPath = parentPath.replace(/\/+/g, '/');
+    console.log('Navigating up from', currentPath);
     
-    console.log('Navigating up from', currentPath, 'to:', normalizedPath);
-    
-    onSendCommand(`cd "${normalizedPath}"`);
+    onSendCommand('cd ..');
     setTimeout(() => {
       if (!pendingRequestRef.current) {
-        loadDirectory(normalizedPath);
+        loadDirectory('.');
       }
     }, 100);
   };
 
   const refreshCurrent = () => {
-    if (!pendingRequestRef.current && currentPath) {
-      console.log('Refreshing current directory:', currentPath);
-      loadDirectory(currentPath);
+    if (!pendingRequestRef.current) {
+      console.log('Refreshing current directory');
+      loadDirectory('.');
     }
   };
+
+  // Listen for directory changes from the terminal/server and load directory contents
+  useEffect(() => {
+    if (currentPath && isConnected && !pendingRequestRef.current) {
+      console.log('Current directory changed to:', currentPath);
+      // Small delay to let any pending operations complete
+      setTimeout(() => {
+        if (!pendingRequestRef.current) {
+          loadDirectory(currentPath);
+        }
+      }, 200);
+    }
+  }, [currentPath, isConnected, loadDirectory]);
 
   return (
     <div className="file-explorer">
