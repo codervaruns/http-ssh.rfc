@@ -174,10 +174,16 @@
   background-color: #1a1a1a;
   border-top: 1px solid #333;
   gap: 5px;
+  position: relative;
+}
+
+.input-container {
+  flex: 1;
+  position: relative;
 }
 
 .command-input {
-  flex: 1;
+  width: 100%;
   background: transparent;
   border: none;
   color: #ffffff;

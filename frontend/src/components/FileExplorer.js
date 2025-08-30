@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './FileExplorer.css';
 
-const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange }) => {
+const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange, onDirectoryContentsLoaded }) => {
   const [currentPath, setCurrentPath] = useState('/');
   const [directoryItems, setDirectoryItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -27,6 +27,11 @@ const FileExplorer = ({ isConnected, onSendCommand, onDirectoryChange }) => {
       setError('Failed to send directory listing command');
       setLoading(false);
       return;
+    }
+    
+    // Notify parent about directory contents for auto-completion
+    if (onDirectoryContentsLoaded) {
+      onDirectoryContentsLoaded(path, sampleItems);
     }
     
     // Note: The actual parsing will happen when we receive the response

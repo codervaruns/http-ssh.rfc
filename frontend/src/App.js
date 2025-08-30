@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import WebSocketService from './services/WebSocketService';
+import AutoCompleteService from './services/AutoCompleteService';
 import FileExplorer from './components/FileExplorer';
+import AutoComplete from './components/AutoComplete';
 import './App.css';
 
 function App() {
@@ -22,6 +24,13 @@ function App() {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [currentDirectory, setCurrentDirectory] = useState('/');
   const [showFileExplorer, setShowFileExplorer] = useState(true);
+  
+  // Auto-completion state variables
+  const [autoCompleteVisible, setAutoCompleteVisible] = useState(false);
+  const [autoCompleteSuggestions, setAutoCompleteSuggestions] = useState([]);
+  const [autoCompleteSelectedIndex, setAutoCompleteSelectedIndex] = useState(0);
+  const [autoCompletePosition, setAutoCompletePosition] = useState({ left: 0, bottom: 0 });
+  
   const inputRef = useRef(null);
   const outputRef = useRef(null);
   const idCounterRef = useRef(0); // Use ref to persist across renders
@@ -185,12 +194,25 @@ function App() {
     }
   }, [output]);
 
+  // Update AutoCompleteService with current directory
+  useEffect(() => {
+    AutoCompleteService.setCurrentDirectory(currentDirectory);
+  }, [currentDirectory]);
+
+  // Update directory contents in AutoCompleteService when file explorer loads directory
+  const handleDirectoryContentsLoaded = (path, contents) => {
+    AutoCompleteService.cacheDirectoryContents(path, contents);
+  };
+
   const handleSubmit = (e) => {
     e.preventDefault();
     
     if (!command.trim()) return;
     
     if (isConnected) {
+      // Add command to AutoCompleteService history
+      AutoCompleteService.addToHistory(command.trim());
+      
       // Send command via WebSocket
       const success = WebSocketService.sendCommand(command.trim());
       
@@ -218,28 +240,135 @@ function App() {
     }
     
     setCommand('');
+    setAutoCompleteVisible(false);
+  };
+
+  const updateAutoComplete = (inputValue, cursorPosition) => {
+    if (!inputValue.trim()) {
+      setAutoCompleteVisible(false);
+      return;
+    }
+
+    const completions = AutoCompleteService.getCompletions(inputValue, cursorPosition);
+    
+    if (completions.suggestions.length > 0) {
+      setAutoCompleteSuggestions(completions.suggestions);
+      setAutoCompleteSelectedIndex(0);
+      setAutoCompleteVisible(true);
+      
+      // Calculate position for dropdown
+      if (inputRef.current) {
+        const inputRect = inputRef.current.getBoundingClientRect();
+        const charWidth = 8; // Approximate character width in monospace font
+        const leftOffset = completions.startIndex * charWidth;
+        
+        setAutoCompletePosition({
+          left: inputRect.left + leftOffset,
+          bottom: window.innerHeight - inputRect.top + 5
+        });
+      }
+    } else {
+      setAutoCompleteVisible(false);
+    }
+  };
+
+  const handleInputChange = (e) => {
+    const value = e.target.value;
+    setCommand(value);
+    updateAutoComplete(value, e.target.selectionStart);
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'ArrowUp') {
+    // Handle auto-completion navigation
+    if (autoCompleteVisible) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setAutoCompleteSelectedIndex(prev => 
+          prev < autoCompleteSuggestions.length - 1 ? prev + 1 : 0
+        );
+        return;
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setAutoCompleteSelectedIndex(prev => 
+          prev > 0 ? prev - 1 : autoCompleteSuggestions.length - 1
+        );
+        return;
+      } else if (e.key === 'Tab' || e.key === 'Enter') {
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          applyAutoComplete();
+          return;
+        } else if (e.key === 'Enter' && autoCompleteSelectedIndex >= 0) {
+          e.preventDefault();
+          applyAutoComplete();
+          return;
+        }
+      } else if (e.key === 'Escape') {
+        setAutoCompleteVisible(false);
+        return;
+      }
+    }
+
+    // Original key handling for command history
+    if (e.key === 'ArrowUp' && !autoCompleteVisible) {
       e.preventDefault();
       if (commandHistory.length > 0) {
         const newIndex = historyIndex === -1 ? commandHistory.length - 1 : Math.max(0, historyIndex - 1);
         setHistoryIndex(newIndex);
         setCommand(commandHistory[newIndex]);
+        updateAutoComplete(commandHistory[newIndex], commandHistory[newIndex].length);
       }
-    } else if (e.key === 'ArrowDown') {
+    } else if (e.key === 'ArrowDown' && !autoCompleteVisible) {
       e.preventDefault();
       if (historyIndex !== -1) {
         const newIndex = historyIndex + 1;
         if (newIndex >= commandHistory.length) {
           setHistoryIndex(-1);
           setCommand('');
+          setAutoCompleteVisible(false);
         } else {
           setHistoryIndex(newIndex);
           setCommand(commandHistory[newIndex]);
+          updateAutoComplete(commandHistory[newIndex], commandHistory[newIndex].length);
         }
       }
+    }
+
+    // Show auto-complete on Ctrl+Space
+    if (e.ctrlKey && e.key === ' ') {
+      e.preventDefault();
+      updateAutoComplete(command, e.target.selectionStart);
+    }
+  };
+
+  const applyAutoComplete = () => {
+    if (autoCompleteSelectedIndex >= 0 && autoCompleteSelectedIndex < autoCompleteSuggestions.length) {
+      const suggestion = autoCompleteSuggestions[autoCompleteSelectedIndex];
+      const completions = AutoCompleteService.getCompletions(command, inputRef.current?.selectionStart);
+      
+      const newCommand = 
+        command.slice(0, completions.startIndex) + 
+        suggestion.text + 
+        command.slice(completions.endIndex);
+      
+      setCommand(newCommand);
+      setAutoCompleteVisible(false);
+      
+      // Set cursor position after the completed text
+      setTimeout(() => {
+        if (inputRef.current) {
+          const newCursorPos = completions.startIndex + suggestion.text.length;
+          inputRef.current.setSelectionRange(newCursorPos, newCursorPos);
+          inputRef.current.focus();
+        }
+      }, 0);
+    }
+  };
+
+  const handleAutoCompleteSelect = (suggestion, index, shouldComplete = true) => {
+    setAutoCompleteSelectedIndex(index);
+    if (shouldComplete) {
+      applyAutoComplete();
     }
   };
 
@@ -258,6 +387,7 @@ function App() {
 
   const handleDirectoryChange = (newPath) => {
     setCurrentDirectory(newPath);
+    AutoCompleteService.setCurrentDirectory(newPath);
   };
 
   const toggleFileExplorer = () => {
@@ -316,6 +446,7 @@ function App() {
               return false;
             }}
             onDirectoryChange={handleDirectoryChange}
+            onDirectoryContentsLoaded={handleDirectoryContentsLoaded}
           />
         )}
         
@@ -347,16 +478,27 @@ function App() {
           <form onSubmit={handleSubmit} className="terminal-input">
             <span className="prompt">$ </span>
             <span className="current-dir">{currentDirectory}</span>
-            <input
-              ref={inputRef}
-              type="text"
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
-              onKeyDown={handleKeyDown}
-              className="command-input"
-              placeholder="Enter command..."
-              autoFocus
-            />
+            <div className="input-container">
+              <input
+                ref={inputRef}
+                type="text"
+                value={command}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                onBlur={() => setTimeout(() => setAutoCompleteVisible(false), 200)}
+                onFocus={() => updateAutoComplete(command, command.length)}
+                className="command-input"
+                placeholder="Enter command... (Ctrl+Space for suggestions)"
+                autoFocus
+              />
+              <AutoComplete
+                suggestions={autoCompleteSuggestions}
+                selectedIndex={autoCompleteSelectedIndex}
+                onSelect={handleAutoCompleteSelect}
+                position={autoCompletePosition}
+                visible={autoCompleteVisible}
+              />
+            </div>
           </form>
         </div>
       </div>
