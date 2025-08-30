@@ -75,7 +75,7 @@ impl Lobby {
         }
 
         // Spawn process (non-blocking)
-        let mut child = if cfg!(target_os = "windows") {
+        let child = if cfg!(target_os = "windows") {
             Command::new("cmd")
                 .current_dir(self.curr_dir.clone())
                 .args(["/C", command])

@@ -21,7 +21,6 @@ async fn health_check() -> Result<HttpResponse> {
 // Add file listing endpoint for file explorer
 async fn list_directory(path: web::Path<String>) -> Result<HttpResponse> {
     use std::fs;
-    use std::path::Path;
     
     let dir_path = path.into_inner();
     let safe_path = if dir_path.starts_with('/') { 
@@ -38,10 +37,15 @@ async fn list_directory(path: web::Path<String>) -> Result<HttpResponse> {
                     let metadata = entry.metadata().ok();
                     let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
                     let permissions = if cfg!(unix) {
-                        use std::os::unix::fs::PermissionsExt;
-                        metadata.as_ref()
-                            .map(|m| format!("{:o}", m.permissions().mode()))
-                            .unwrap_or_else(|| "???".to_string())
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            metadata.as_ref()
+                                .map(|m| format!("{:o}", m.permissions().mode()))
+                                .unwrap_or_else(|| "???".to_string())
+                        }
+                        #[cfg(not(unix))]
+                        "???".to_string()
                     } else {
                         "rwx".to_string()
                     };
