@@ -32,6 +32,9 @@ Type out a message in [https://github.com/orgs/acm-avv/discussions/17](https://g
 
 This project aims to develop a remote shell system that allows users to execute operating system commands on a remote server machine using standard web technologies. Unlike traditional SSH, all communication for commands and their outputs will be facilitated over the HTTP protocol.
 
+## Tech Stack
+
+https://raw.githubusercontent.com/marwin1991/profile-technology-icons/refs/heads/main/icons/rust.png
 ## Installation Guide
 
 1. Prerequisites
