@@ -43,7 +43,7 @@ This project aims to develop a remote shell system that allows users to execute 
 2. Frontend Installation
 
 - Clone the repository:
-   git clone https://github.com/your-repo/http-ssh.rfc.git
+   git clone https://github.com/codervaruns/http-ssh.rfc.git
    cd http-ssh.rfc/frontend
 
 - Install frontend dependencies:
