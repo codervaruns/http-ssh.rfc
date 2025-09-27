@@ -1,4 +1,4 @@
-![json](https://github.com/user-attachments/assets/6d7b91d6-6b43-4347-a38b-509f9160f93e)# http-ssh.rfc
+
 Submissions repository for `ASOC17` - HTTP-SSH App
 
 > [!NOTE]
