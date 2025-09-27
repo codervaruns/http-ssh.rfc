@@ -32,6 +32,63 @@ Type out a message in [https://github.com/orgs/acm-avv/discussions/17](https://g
 
 This project aims to develop a remote shell system that allows users to execute operating system commands on a remote server machine using standard web technologies. Unlike traditional SSH, all communication for commands and their outputs will be facilitated over the HTTP protocol.
 
+## Installation Guide
+
+1. Prerequisites
+- Node.js (v14 or higher)
+- npm or yarn package manager
+- Rust (for backend)
+- Git
+
+2. Frontend Installation
+
+- Clone the repository:
+   git clone https://github.com/your-repo/http-ssh.rfc.git
+   cd http-ssh.rfc/frontend
+
+- Install frontend dependencies:
+   npm install
+
+3. Start development server:
+   - npm start
+   - Frontend will be available at: http://localhost:3001
+
+4 .Frontend Configuration
+- Default backend WebSocket URL: ws://localhost:8080/ws
+- Connection URL can be modified in the application interface
+
+5. Backend Installation
+
+- Navigate to backend directory:
+   cd http-ssh.rfc/backend
+
+- Build and run the Rust backend:
+   cargo build
+   cargo run
+   
+6. Default Settings
+- Frontend:
+    Port: 3001
+
+7. Production Deployment
+
+- To create production build:
+cd frontend
+npm run build
+
+8. Testing the Connection
+
+-  Start backend server
+- Launch frontend application
+- Verify WebSocket URL matches backend
+- Click connect button
+- Use terminal interface for commands
+
+9. System Requirements
+- OS: Windows/Linux/MacOS
+- Modern web browser with WebSocket support
+- Sufficient permissions for system commands
+
 ### Core Functionality:
 - Remote Command Execution: Enable users to run shell commands on a distant server.
 - HTTP-Based Communication: Utilize HTTP for transmitting commands from the client to the server and for sending command outputs back to the client.
