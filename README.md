@@ -53,7 +53,7 @@ This project aims to develop a remote shell system that allows users to execute 
    - npm start
    - Frontend will be available at: http://localhost:3001
 
-4 .Frontend Configuration
+4. Frontend Configuration
    - Default backend WebSocket URL: ws://localhost:8080/ws
    - Connection URL can be modified in the application interface
 
