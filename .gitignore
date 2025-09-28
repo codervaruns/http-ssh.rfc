@@ -16,6 +16,9 @@ frontend/npm-debug.log*
 frontend/yarn-debug.log*
 frontend/yarn-error.log*
 
+backend/target/
+backend/node_modules/
+
 # Logs
 *.log
 logs/

@@ -5,7 +5,6 @@ use std::process::Command;
 use uuid::Uuid;
 use serde_json;
 use std::path::PathBuf;
-
 use std::process::Stdio;
 use std::time::Duration;
 use wait_timeout::ChildExt;
@@ -15,7 +14,7 @@ type Socket = Recipient<WsMessage>;
 pub struct Lobby {
     sessions: HashMap<Uuid, Socket>,
     rooms: HashMap<Uuid, HashSet<Uuid>>,
-    curr_dir: PathBuf,
+    curr_dir: HashMap<Uuid, PathBuf>, // Per-session current directory
 }
 
 impl Default for Lobby {
@@ -23,7 +22,7 @@ impl Default for Lobby {
         Lobby {
             sessions: HashMap::new(),
             rooms: HashMap::new(),
-            curr_dir: std::env::current_dir().unwrap(),
+            curr_dir: HashMap::new(),
         }
     }
 }
@@ -35,36 +34,43 @@ impl Lobby {
                 message: message.to_owned(),
             });
         } else {
-            println!("attempting to send message but couldn't find user id");
+            println!("attempting to send message but couldn't find user id: {}", id_to);
         }
     }
 
     /// Execute command with support for `cd` + timeout
     fn execute_command(&mut self, command: &str, id_to: &Uuid) {
+        // Get or initialize current directory for this session
+        let curr_dir = self.curr_dir.get(id_to)
+            .cloned()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+
         // Handle `cd` separately
         if command.starts_with("cd ") {
             let target_path = command[3..].trim();
             let new_path = if target_path.is_empty() {
                 // cd with no arguments goes to home directory
-                std::env::var("HOME").unwrap_or_else(|_| "/".to_string()).into()
+                std::env::var("HOME")
+                    .or_else(|_| std::env::var("USERPROFILE"))
+                    .unwrap_or_else(|_| "/".to_string()).into()
             } else if target_path == "." {
                 // cd . stays in current directory
-                self.curr_dir.clone()
+                curr_dir.clone()
             } else if target_path == ".." {
                 // cd .. goes to parent directory
-                self.curr_dir.parent().unwrap_or(&self.curr_dir).to_path_buf()
-            } else if target_path.starts_with('/') {
-                // Absolute path
+                curr_dir.parent().unwrap_or(&curr_dir).to_path_buf()
+            } else if target_path.starts_with('/') || (cfg!(windows) && target_path.len() > 1 && target_path.chars().nth(1) == Some(':')) {
+                // Absolute path (Unix or Windows)
                 PathBuf::from(target_path)
             } else {
                 // Relative path
-                self.curr_dir.join(target_path)
+                curr_dir.join(target_path)
             };
             
             match new_path.canonicalize() {
                 Ok(resolved) => {
-                    self.curr_dir = resolved;
-                    let current_path = self.curr_dir.to_string_lossy();
+                    self.curr_dir.insert(id_to.clone(), resolved.clone());
+                    let current_path = resolved.to_string_lossy();
                     let response = serde_json::json!({
                         "type": "command_output",
                         "payload": {
@@ -85,7 +91,7 @@ impl Lobby {
                             "stdout": "",
                             "stderr": format!("cd: \"{}\": {}", target_path, e),
                             "exitCode": 1,
-                            "currentDirectory": self.curr_dir.to_string_lossy()
+                            "currentDirectory": curr_dir.to_string_lossy()
                         }
                     });
                     self.send_message(&response.to_string(), id_to);
@@ -95,19 +101,19 @@ impl Lobby {
         }
 
         // Always include current directory in response
-        let current_dir_str = self.curr_dir.to_string_lossy().to_string();
+        let current_dir_str = curr_dir.to_string_lossy().to_string();
 
         // Spawn process (non-blocking)
         let child = if cfg!(target_os = "windows") {
             Command::new("cmd")
-                .current_dir(self.curr_dir.clone())
+                .current_dir(&curr_dir)
                 .args(["/C", command])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
         } else {
             Command::new("bash")
-                .current_dir(self.curr_dir.clone())
+                .current_dir(&curr_dir)
                 .arg("-c")
                 .arg(command)
                 .stdout(Stdio::piped())
@@ -118,27 +124,43 @@ impl Lobby {
         match child {
             Ok(mut process) => {
                 let timeout = Duration::from_secs(15);
-                match process.wait_timeout(timeout).unwrap() {
-                    Some(status) => {
-                        let output = process.wait_with_output().unwrap();
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        let exit_code = status.code().unwrap_or(-1);
+                match process.wait_timeout(timeout) {
+                    Ok(Some(status)) => {
+                        match process.wait_with_output() {
+                            Ok(output) => {
+                                let stdout = String::from_utf8_lossy(&output.stdout);
+                                let stderr = String::from_utf8_lossy(&output.stderr);
+                                let exit_code = status.code().unwrap_or(-1);
 
-                        let response = serde_json::json!({
-                            "type": "command_output",
-                            "payload": {
-                                "command": command,
-                                "stdout": stdout.trim(),
-                                "stderr": stderr.trim(),
-                                "exitCode": exit_code,
-                                "currentDirectory": current_dir_str
+                                let response = serde_json::json!({
+                                    "type": "command_output",
+                                    "payload": {
+                                        "command": command,
+                                        "stdout": stdout.trim(),
+                                        "stderr": stderr.trim(),
+                                        "exitCode": exit_code,
+                                        "currentDirectory": current_dir_str
+                                    }
+                                });
+                                
+                                self.send_message(&response.to_string(), id_to);
                             }
-                        });
-                        
-                        self.send_message(&response.to_string(), id_to);
+                            Err(e) => {
+                                let response = serde_json::json!({
+                                    "type": "command_output",
+                                    "payload": {
+                                        "command": command,
+                                        "stdout": "",
+                                        "stderr": format!("Failed to read command output: {}", e),
+                                        "exitCode": -1,
+                                        "currentDirectory": current_dir_str
+                                    }
+                                });
+                                self.send_message(&response.to_string(), id_to);
+                            }
+                        }
                     }
-                    None => {
+                    Ok(None) => {
                         // Timed out → kill process
                         let _ = process.kill();
                         let _ = process.wait();
@@ -148,7 +170,20 @@ impl Lobby {
                             "payload": {
                                 "command": command,
                                 "stdout": "",
-                                "stderr": format!("Process timed out after {:?}s", timeout.as_secs()),
+                                "stderr": format!("Command timed out after {} seconds", timeout.as_secs()),
+                                "exitCode": -1,
+                                "currentDirectory": current_dir_str
+                            }
+                        });
+                        self.send_message(&response.to_string(), id_to);
+                    }
+                    Err(e) => {
+                        let response = serde_json::json!({
+                            "type": "command_output",
+                            "payload": {
+                                "command": command,
+                                "stdout": "",
+                                "stderr": format!("Process wait error: {}", e),
                                 "exitCode": -1,
                                 "currentDirectory": current_dir_str
                             }
@@ -174,96 +209,8 @@ impl Lobby {
     }
 }
 
-
-
-/*impl Lobby {
-    fn send_message(&self, message: &str, id_to: &Uuid) {
-        if let Some(socket_recipient) = self.sessions.get(id_to) {
-            let _ = socket_recipient.do_send(WsMessage {
-                message: message.to_owned(),
-            });
-        } else {
-            println!("attempting to send message but couldn't find user id");
-        }
-    }
-
-    // Add command execution function
-    fn execute_command(&self, command: &str, id_to: &Uuid) {
-        // Use cmd on Windows, bash on Unix-like systems
-        let output = if cfg!(target_os = "windows") {
-            Command::new("cmd")
-                .args(["/C", command])
-                .output()
-        } else {
-            Command::new("bash")
-                .arg("-c")
-                .arg(command)
-                .output()
-        };
-
-        match output {
-            Ok(result) => {
-                let stdout = String::from_utf8_lossy(&result.stdout);
-                let stderr = String::from_utf8_lossy(&result.stderr);
-                let exit_code = result.status.code().unwrap_or(-1);
-
-                let response = serde_json::json!({
-                    "type": "command_output",
-                    "payload": {
-                        "command": command,
-                        "stdout": stdout.trim(),
-                        "stderr": stderr.trim(),
-                        "exitCode": exit_code
-                    }
-                });
-
-                self.send_message(&response.to_string(), id_to);
-            }
-            Err(e) => {
-                let error_response = serde_json::json!({
-                    "type": "command_output",
-                    "payload": {
-                        "command": command,
-                        "stdout": "",
-                        "stderr": format!("Failed to execute command: {}", e),
-                        "exitCode": -1
-                    }
-                });
-
-                self.send_message(&error_response.to_string(), id_to);
-            }
-        }
-    }
-}
-*/
-
 impl Actor for Lobby {
     type Context = Context<Self>;
-}
-
-impl Handler<Disconnect> for Lobby {
-    type Result = ();
-
-    fn handle(&mut self, msg: Disconnect, _: &mut Context<Self>) {
-        if self.sessions.remove(&msg.self_id).is_some() {
-            self.rooms
-                .get(&msg.lobby_id)
-                .unwrap()
-                .iter()
-                .filter(|conn_id| *conn_id.to_owned() != msg.self_id)
-                .for_each(|user_id| {
-                    self.send_message(&format!("{} disconnected.", &msg.self_id), user_id)
-                });
-
-            if let Some(lobby) = self.rooms.get_mut(&msg.lobby_id) {
-                if lobby.len() > 1 {
-                    lobby.remove(&msg.self_id);
-                } else {
-                    self.rooms.remove(&msg.lobby_id);
-                }
-            }
-        }
-    }
 }
 
 impl Handler<Connect> for Lobby {
@@ -277,17 +224,49 @@ impl Handler<Connect> for Lobby {
 
         self.sessions.insert(msg.self_id, msg.addr);
 
+        // Initialize current directory for this session
+        let initial_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        self.curr_dir.insert(msg.self_id, initial_dir.clone());
+
         // Send JSON formatted welcome message with current directory
         let welcome_message = serde_json::json!({
             "type": "system_message",
             "payload": {
                 "message": format!("Connected! Your session ID is {}", msg.self_id),
                 "timestamp": chrono::Utc::now().to_rfc3339(),
-                "currentDirectory": self.curr_dir.to_string_lossy()
+                "currentDirectory": initial_dir.to_string_lossy()
             }
         });
         
         self.send_message(&welcome_message.to_string(), &msg.self_id);
+    }
+}
+
+impl Handler<Disconnect> for Lobby {
+    type Result = ();
+
+    fn handle(&mut self, msg: Disconnect, _: &mut Context<Self>) {
+        if self.sessions.remove(&msg.self_id).is_some() {
+            // Remove current directory tracking
+            self.curr_dir.remove(&msg.self_id);
+            
+            if let Some(room_users) = self.rooms.get(&msg.lobby_id) {
+                room_users
+                    .iter()
+                    .filter(|conn_id| *conn_id.to_owned() != msg.self_id)
+                    .for_each(|user_id| {
+                        self.send_message(&format!("{} disconnected.", &msg.self_id), user_id)
+                    });
+            }
+
+            if let Some(lobby) = self.rooms.get_mut(&msg.lobby_id) {
+                if lobby.len() > 1 {
+                    lobby.remove(&msg.self_id);
+                } else {
+                    self.rooms.remove(&msg.lobby_id);
+                }
+            }
+        }
     }
 }
 
