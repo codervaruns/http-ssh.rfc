@@ -16,18 +16,6 @@ In-order to be eligible to work on this project as **Request for Code** under th
 "GitHub": "@Ashrockzzz2003",
 ```
 
-## How to Apply
-Type out a message in [https://github.com/orgs/acm-avv/discussions/17](https://github.com/orgs/acm-avv/discussions/17) with the following details:
-1. Team Name
-2. Team Members' Names, Roll-Numbers and respective GitHub usernames
-3. Tag the project manager as **@username**
-
-## Guidelines
-1. Keep all discussions limited to this discussion channel by tagging the project manager via **@username**
-2. Do not try to contact the project manager personally unless they are open to it.
-4. Maintain decorum and avoid any misbehavior with the project manager. This can be subjected to disqualification.
-5. Send us an update every week with regards to your progress for your respective project. If we do not receive an update for more than 10 days then your team will be disqualified automatically.
-
 ## Project Description
 
 This project aims to develop a remote shell system that allows users to execute operating system commands on a remote server machine using standard web technologies. Unlike traditional SSH, all communication for commands and their outputs will be facilitated over the HTTP protocol.
